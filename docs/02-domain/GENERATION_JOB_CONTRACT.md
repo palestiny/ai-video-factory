@@ -92,3 +92,7 @@ JobEvent is an immutable, append-only record for operational history. It capture
 Event types currently defined: CREATED, STARTED, SUCCEEDED, FAILED, RETRY_SCHEDULED, and CANCELLED.
 
 An event may include attempt number, normalized failure code, and small key/value metadata for correlation. Persistence ordering, append-only storage, and query/index strategy remain infrastructure concerns.
+
+## Cancellation
+
+A logical job may be cancelled from QUEUED, RUNNING, or RETRYING. SUCCEEDED and FAILED are terminal outcomes and cannot be converted to CANCELLED. Provider interruption and worker cleanup remain application/infrastructure responsibilities.
