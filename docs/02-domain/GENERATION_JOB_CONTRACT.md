@@ -84,3 +84,11 @@ Provider-specific exceptions must not cross the domain boundary. They are transl
 Known retryable codes are RATE_LIMITED, TIMEOUT, PROVIDER_FAILURE, and TRANSIENT_NETWORK. INVALID_REQUEST, AUTHENTICATION, CONTENT_REJECTED, and UNKNOWN are non-retryable by default.
 
 Unknown provider error codes map to UNKNOWN rather than being silently treated as retryable. Provider operation identifiers are retained when available so an external operation can be correlated during recovery.
+
+## Job Event Contract
+
+JobEvent is an immutable, append-only record for operational history. It captures lifecycle facts without making the event store part of the domain aggregate's mutable state.
+
+Event types currently defined: CREATED, STARTED, SUCCEEDED, FAILED, RETRY_SCHEDULED, and CANCELLED.
+
+An event may include attempt number, normalized failure code, and small key/value metadata for correlation. Persistence ordering, append-only storage, and query/index strategy remain infrastructure concerns.
