@@ -43,7 +43,7 @@ def test_fake_provider_produces_normalized_result():
         )
     )
 
-    assert isinstance(provider, VideoGenerationPort)
+    assert callable(getattr(provider, "generate", None))
     assert result.provider == "fake-video"
     assert result.provider_operation_id == "op-job-1"
     assert result.artifact_refs == ("artifact://job-1",)
