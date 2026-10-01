@@ -76,3 +76,70 @@ def test_idempotency_normalization_is_deterministic():
 def test_blank_idempotency_key_is_rejected():
     with pytest.raises(ValueError):
         normalize_idempotency_key("   ")
+
+
+def test_generation_attempt_is_immutable_and_starts_running():
+    from datetime import datetime, timezone
+
+    from app.domain.generation import AttemptStatus, GenerationAttempt
+
+    started_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    attempt = GenerationAttempt.started(
+        attempt_id="attempt-1",
+        job_id="job-1",
+        attempt_number=1,
+        provider="fake",
+        started_at=started_at,
+    )
+
+    assert attempt.status is AttemptStatus.RUNNING
+    assert attempt.attempt_number == 1
+
+    with pytest.raises(Exception):
+        attempt.status = AttemptStatus.SUCCEEDED
+
+
+def test_generation_attempt_terminal_success_is_immutable():
+    from datetime import datetime, timezone
+
+    from app.domain.generation import AttemptStatus, GenerationAttempt
+
+    started_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    completed_at = datetime(2026, 1, 1, 0, 1, tzinfo=timezone.utc)
+
+    attempt = GenerationAttempt.succeeded(
+        attempt_id="attempt-1",
+        job_id="job-1",
+        attempt_number=1,
+        provider="fake",
+        started_at=started_at,
+        completed_at=completed_at,
+        provider_operation_id="op-1",
+    )
+
+    assert attempt.status is AttemptStatus.SUCCEEDED
+    assert attempt.completed_at == completed_at
+    assert attempt.failure_code is None
+
+
+def test_generation_attempt_terminal_failure_records_normalized_failure():
+    from datetime import datetime, timezone
+
+    from app.domain.generation import AttemptStatus, GenerationAttempt
+
+    started_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    completed_at = datetime(2026, 1, 1, 0, 1, tzinfo=timezone.utc)
+
+    attempt = GenerationAttempt.failed(
+        attempt_id="attempt-1",
+        job_id="job-1",
+        attempt_number=2,
+        provider="fake",
+        started_at=started_at,
+        completed_at=completed_at,
+        failure_code="TIMEOUT",
+    )
+
+    assert attempt.status is AttemptStatus.FAILED
+    assert attempt.failure_code == "TIMEOUT"
+    assert attempt.completed_at == completed_at
