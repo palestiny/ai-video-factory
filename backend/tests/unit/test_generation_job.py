@@ -145,3 +145,37 @@ def test_generation_attempt_terminal_failure_records_normalized_failure():
     assert attempt.status is AttemptStatus.FAILED
     assert attempt.failure_code == "TIMEOUT"
     assert attempt.completed_at == completed_at
+
+
+def test_queued_running_and_retrying_jobs_can_be_cancelled():
+    queued = GenerationJob.create("job-1", "video", "scene-1")
+    queued.cancel()
+    assert queued.status is GenerationStatus.CANCELLED
+
+    running = GenerationJob.create("job-2", "video", "scene-2")
+    running.start()
+    running.cancel()
+    assert running.status is GenerationStatus.CANCELLED
+
+    retrying = GenerationJob.create("job-3", "video", "scene-3")
+    retrying.start()
+    retrying.fail("TIMEOUT")
+    assert retrying.schedule_retry(RetryPolicy(max_attempts=3))
+    retrying.cancel()
+    assert retrying.status is GenerationStatus.CANCELLED
+
+
+def test_completed_or_failed_job_cannot_be_cancelled():
+    completed = GenerationJob.create("job-1", "video", "scene-1")
+    completed.start()
+    completed.succeed()
+
+    with pytest.raises(InvalidStateTransition):
+        completed.cancel()
+
+    failed = GenerationJob.create("job-2", "video", "scene-2")
+    failed.start()
+    failed.fail("CONTENT_REJECTED")
+
+    with pytest.raises(InvalidStateTransition):
+        failed.cancel()
