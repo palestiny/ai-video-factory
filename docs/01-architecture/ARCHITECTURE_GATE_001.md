@@ -117,3 +117,27 @@ We do **not** lock the system to:
 **PASS for foundation design.**
 
 Implementation may begin with domain contracts and tests. Concrete provider integration is deferred until those contracts are stable.
+
+## Implementation Progress
+
+The foundation is now being implemented incrementally behind the approved boundaries:
+
+- GenerationJob lifecycle and retry policy
+- immutable GenerationAttempt history
+- atomic idempotency repository contract with request fingerprint
+- normalized Failure model
+- immutable JobEvent model
+- provider-neutral generation ports and deterministic fake contract
+
+Still intentionally deferred:
+
+- concrete provider SDK adapters
+- production persistence
+- queue/worker implementation
+- rendering implementation
+- external API integration
+- frontend
+
+### Transaction boundary note
+
+Idempotency reservation and creation/persistence of the corresponding logical job must share an atomic application/infrastructure transaction in production. A reservation must never survive a failed job creation as an orphaned claim.
