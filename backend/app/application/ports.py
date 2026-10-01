@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Mapping, Protocol
 
 
@@ -10,7 +10,7 @@ class GenerationRequest:
     capability: str
     inputs: Mapping[str, object]
     references: tuple[str, ...] = ()
-    constraints: Mapping[str, object] = ()
+    constraints: Mapping[str, object] = field(default_factory=dict)
     idempotency_key: str = ""
 
     def __post_init__(self) -> None:
@@ -27,9 +27,9 @@ class GenerationResult:
     provider: str
     provider_operation_id: str | None
     artifact_refs: tuple[str, ...]
-    usage: Mapping[str, object] = ()
-    cost: Mapping[str, object] = ()
-    diagnostics: Mapping[str, object] = ()
+    usage: Mapping[str, object] = field(default_factory=dict)
+    cost: Mapping[str, object] = field(default_factory=dict)
+    diagnostics: Mapping[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.provider.strip():
