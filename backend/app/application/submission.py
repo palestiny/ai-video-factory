@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Protocol
 
 from app.application.idempotency import IdempotencyRepository, ReservationStatus
@@ -82,7 +83,7 @@ class SubmitGenerationJob:
                 event_id=f"{job.job_id}:created",
                 job_id=job.job_id,
                 event_type=JobEventType.CREATED,
-                occurred_at=__import__("datetime").datetime.now(__import__("datetime").timezone.utc),
+                occurred_at=datetime.now(timezone.utc),
             )
         )
         self._transaction.commit()
