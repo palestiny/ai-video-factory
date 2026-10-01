@@ -76,3 +76,11 @@ An idempotency key alone proves request identity only if the caller guarantees c
 The application owns the reservation contract. Persistence-specific uniqueness constraints, transactions, locking, or compare-and-set mechanisms remain infrastructure concerns.
 
 The in-memory implementation is a deterministic test double only; it is not the production persistence strategy.
+
+## Failure Normalization Contract
+
+Provider-specific exceptions must not cross the domain boundary. They are translated into a normalized Failure containing a stable FailureCode, human-readable message, optional provider metadata, and optional diagnostics.
+
+Known retryable codes are RATE_LIMITED, TIMEOUT, PROVIDER_FAILURE, and TRANSIENT_NETWORK. INVALID_REQUEST, AUTHENTICATION, CONTENT_REJECTED, and UNKNOWN are non-retryable by default.
+
+Unknown provider error codes map to UNKNOWN rather than being silently treated as retryable. Provider operation identifiers are retained when available so an external operation can be correlated during recovery.
