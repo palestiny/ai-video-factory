@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Mapping, Protocol
 
+from app.domain.events import JobEvent
+
 
 @dataclass(frozen=True)
 class GenerationRequest:
@@ -57,6 +59,6 @@ class TextGenerationPort(Protocol):
 
 
 class JobEventStore(Protocol):
-    def append(self, event: object) -> None:
+    def append(self, event: JobEvent) -> None:
         """Append an immutable JobEvent without rewriting prior history."""
         ...
