@@ -54,3 +54,9 @@ class VoiceGenerationPort(Protocol):
 class TextGenerationPort(Protocol):
     def generate(self, request: GenerationRequest) -> GenerationResult:
         ...
+
+
+class JobEventStore(Protocol):
+    def append(self, event: object) -> None:
+        """Append an immutable JobEvent without rewriting prior history."""
+        ...
