@@ -26,7 +26,7 @@ _RETRYABLE_ERRORS = {
 
 
 def normalize_idempotency_key(value: str) -> str:
-    normalized = value.strip().lower()
+    normalized = "/".join(part.strip() for part in value.strip().lower().split("/"))
     if not normalized:
         raise ValueError("idempotency key cannot be blank")
     return normalized
