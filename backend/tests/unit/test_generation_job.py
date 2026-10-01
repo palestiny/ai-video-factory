@@ -95,7 +95,9 @@ def test_generation_attempt_is_immutable_and_starts_running():
     assert attempt.status is AttemptStatus.RUNNING
     assert attempt.attempt_number == 1
 
-    with pytest.raises(Exception):
+    from dataclasses import FrozenInstanceError
+
+    with pytest.raises(FrozenInstanceError):
         attempt.status = AttemptStatus.SUCCEEDED
 
 
