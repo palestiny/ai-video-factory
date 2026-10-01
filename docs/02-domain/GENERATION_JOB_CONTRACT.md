@@ -52,3 +52,27 @@ Required fields:
 Terminal outcome is represented by `SUCCEEDED` or `FAILED`. A failed attempt carries a normalized `failure_code` and may carry a provider operation identifier.
 
 The logical `GenerationJob` remains mutable across retries; each retry creates a new immutable `GenerationAttempt`. This preserves execution history and prevents a retry from overwriting evidence from a previous provider call.
+
+## Idempotency Repository Contract
+
+The logical generation job is identified by a normalized idempotency key. Reservation is an atomic repository operation, not a read-then-write sequence.
+
+### Contract
+
+reserve(key, request_fingerprint, job_id) must:
+
+1. Normalize the key before lookup.
+2. Create exactly one reservation when the key is unused.
+3. Return the existing logical job when the normalized key and request fingerprint match.
+4. Raise IdempotencyConflict when the key is reused for a different request fingerprint.
+5. Be atomic for concurrent callers; at most one caller may create the reservation.
+
+### Why the fingerprint exists
+
+An idempotency key alone proves request identity only if the caller guarantees correct key construction. The repository therefore records a normalized request fingerprint so accidental key reuse cannot silently attach a new request to an old job.
+
+### Boundary
+
+The application owns the reservation contract. Persistence-specific uniqueness constraints, transactions, locking, or compare-and-set mechanisms remain infrastructure concerns.
+
+The in-memory implementation is a deterministic test double only; it is not the production persistence strategy.
