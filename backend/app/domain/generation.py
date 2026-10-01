@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
 
 
@@ -62,8 +63,8 @@ class GenerationAttempt:
     job_id: str
     attempt_number: int
     provider: str
-    started_at: object
-    completed_at: object | None = None
+    started_at: datetime
+    completed_at: datetime | None = None
     status: AttemptStatus = AttemptStatus.RUNNING
     provider_operation_id: str | None = None
     failure_code: str | None = None
@@ -87,7 +88,7 @@ class GenerationAttempt:
         job_id: str,
         attempt_number: int,
         provider: str,
-        started_at: object,
+        started_at: datetime,
     ) -> "GenerationAttempt":
         return cls(
             attempt_id=attempt_id,
@@ -104,8 +105,8 @@ class GenerationAttempt:
         job_id: str,
         attempt_number: int,
         provider: str,
-        started_at: object,
-        completed_at: object,
+        started_at: datetime,
+        completed_at: datetime,
         provider_operation_id: str | None = None,
     ) -> "GenerationAttempt":
         return cls(
