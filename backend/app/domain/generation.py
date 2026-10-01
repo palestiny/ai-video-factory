@@ -127,8 +127,8 @@ class GenerationAttempt:
         job_id: str,
         attempt_number: int,
         provider: str,
-        started_at: object,
-        completed_at: object,
+        started_at: datetime,
+        completed_at: datetime,
         failure_code: str,
         provider_operation_id: str | None = None,
     ) -> "GenerationAttempt":
