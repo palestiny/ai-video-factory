@@ -190,6 +190,17 @@ class GenerationJob:
             )
         self.status = GenerationStatus.SUCCEEDED
 
+    def cancel(self) -> None:
+        if self.status not in {
+            GenerationStatus.QUEUED,
+            GenerationStatus.RUNNING,
+            GenerationStatus.RETRYING,
+        }:
+            raise InvalidStateTransition(
+                f"cannot cancel generation from {self.status.value}"
+            )
+        self.status = GenerationStatus.CANCELLED
+
     def fail(self, error_code: str) -> None:
         if self.status is not GenerationStatus.RUNNING:
             raise InvalidStateTransition(
