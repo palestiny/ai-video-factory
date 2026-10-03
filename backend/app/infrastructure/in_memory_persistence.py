@@ -3,10 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 
 from app.application.idempotency import (
-    IdempotencyConflict,
-    IdempotencyReservation,
     InMemoryIdempotencyRepository,
-    ReservationStatus,
 )
 from app.application.persistence import (
     ExecutionPersistenceTransaction,
@@ -44,6 +41,9 @@ class InMemoryGenerationAttemptRepository(GenerationAttemptRepository):
         if not history:
             raise KeyError(f"attempt not found: {attempt.attempt_id}")
         history.append(deepcopy(attempt))
+
+    def history(self, attempt_id: str) -> tuple[GenerationAttempt, ...]:
+        return tuple(deepcopy(self._items.get(attempt_id, ())))
 
 
 class InMemoryPersistenceTransaction(
@@ -94,11 +94,12 @@ class InMemoryPersistenceTransaction(
         self.rollback_count += 1
 
     def _capture(self) -> tuple[dict, dict, list, dict]:
+        reservations = self._idempotency.snapshot()
         return (
             deepcopy(self._jobs),
             deepcopy(self._attempts),
             deepcopy(self._events),
-            deepcopy(self._idempotency._reservations),
+            reservations,
         )
 
     def _restore(self, snapshot: tuple[dict, dict, list, dict]) -> None:
@@ -109,4 +110,4 @@ class InMemoryPersistenceTransaction(
         self._attempts.update(attempts)
         self._events.clear()
         self._events.extend(events)
-        self._idempotency._reservations = reservations
+        self._idempotency.restore(reservations)
