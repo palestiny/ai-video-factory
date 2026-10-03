@@ -2,51 +2,24 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Protocol
 
+from app.application.persistence import ExecutionPersistenceTransaction
 from app.application.ports import GenerationRequest, GenerationResult
 from app.domain.events import JobEvent, JobEventType
 from app.domain.failure import Failure
 from app.domain.generation import GenerationAttempt, GenerationJob
 
 
-class GenerationAttemptRepository(Protocol):
-    def add(self, attempt: GenerationAttempt) -> None:
-        ...
-
-    def replace(self, attempt: GenerationAttempt) -> None:
-        ...
-
-
-class GenerationProvider(Protocol):
+class GenerationProvider:
     provider_name: str
 
     def generate(self, request: GenerationRequest) -> GenerationResult:
-        ...
+        raise NotImplementedError
 
 
-class GenerationProviderResolver(Protocol):
+class GenerationProviderResolver:
     def resolve(self, capability: str) -> GenerationProvider:
-        ...
-
-
-class ExecutionJobRepository(Protocol):
-    def get(self, job_id: str) -> GenerationJob | None:
-        ...
-
-
-class ExecutionTransaction(Protocol):
-    jobs: ExecutionJobRepository
-    attempts: GenerationAttemptRepository
-
-    def append_event(self, event: JobEvent) -> None:
-        ...
-
-    def commit(self) -> None:
-        ...
-
-    def rollback(self) -> None:
-        ...
+        raise NotImplementedError
 
 
 @dataclass(frozen=True)
@@ -74,7 +47,7 @@ class ProviderExecutionError(RuntimeError):
 class ExecuteGenerationJob:
     """Execute one provider attempt; retry scheduling stays outside this use case."""
 
-    def __init__(self, transaction: ExecutionTransaction, providers: GenerationProviderResolver) -> None:
+    def __init__(self, transaction: ExecutionPersistenceTransaction, providers: GenerationProviderResolver) -> None:
         self._transaction = transaction
         self._providers = providers
 
