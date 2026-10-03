@@ -11,11 +11,17 @@ from app.application.execution import (
     GenerationProviderResolver,
     LeaseOwnershipLost,
 )
+from app.application.reconciliation import (
+    AmbiguousProviderOutcome,
+    ProviderOperationSafety,
+    ReconciliationQuery,
+)
 from app.application.persistence import ExecutionPersistenceTransaction
 from app.application.ports import GenerationRequest, GenerationResult
 from app.application.worker import GenerationJobQueue, QueueMessage, WorkerLeaseRepository
 from app.domain.events import JobEvent, JobEventType
-from app.domain.generation import GenerationStatus
+from app.domain.failure import Failure
+from app.domain.generation import GenerationAttempt, GenerationStatus
 
 
 class WorkerDeliveryStatus(str, Enum):
@@ -169,6 +175,14 @@ class ExecuteGenerationDelivery:
                 message.job_id,
                 "lease ownership lost before terminal persistence",
             )
+        except AmbiguousProviderOutcome as exc:
+            tx.rollback()
+            return self._handle_ambiguous_outcome(
+                message=message,
+                lease_token=lease.lease_token,
+                now=now,
+                outcome=exc,
+            )
         except Exception:
             # ExecuteGenerationJob owns rollback for terminal persistence failures.
             # Other pre-execution failures have no durable mutation to recover.
@@ -181,3 +195,179 @@ class ExecuteGenerationDelivery:
             )
         finally:
             self._leases.release(message.job_id, lease.lease_token)
+
+
+    def _handle_ambiguous_outcome(
+        self,
+        *,
+        message: QueueMessage,
+        lease_token: str,
+        now: datetime,
+        outcome: AmbiguousProviderOutcome,
+    ) -> WorkerDeliveryResult:
+        if outcome.contract.operation_safety is ProviderOperationSafety.IDEMPOTENT:
+            self._queue.release_or_requeue(message)
+            return WorkerDeliveryResult(
+                WorkerDeliveryStatus.REQUEUED,
+                message.message_id,
+                message.job_id,
+                "ambiguous idempotent provider outcome; stable operation key is reused",
+            )
+
+        if outcome.contract.operation_safety is ProviderOperationSafety.RECONCILABLE:
+            if outcome.reconciliation is None:
+                self._queue.release_or_requeue(message)
+                return WorkerDeliveryResult(
+                    WorkerDeliveryStatus.REQUEUED,
+                    message.message_id,
+                    message.job_id,
+                    "reconciliation declared but no lookup port supplied",
+                )
+            try:
+                lookup_tx = self._transaction_factory()
+                job = lookup_tx.jobs.get(message.job_id)
+                if job is None:
+                    raise KeyError(f"generation job not found: {message.job_id}")
+                key = job.idempotency_key
+                lookup_tx.rollback()
+                generation = outcome.reconciliation.reconcile(ReconciliationQuery(key))
+            except Exception:
+                self._queue.release_or_requeue(message)
+                return WorkerDeliveryResult(
+                    WorkerDeliveryStatus.REQUEUED,
+                    message.message_id,
+                    message.job_id,
+                    "reconciliation lookup failed; no blind provider resubmission",
+                )
+            if generation is None:
+                self._queue.release_or_requeue(message)
+                return WorkerDeliveryResult(
+                    WorkerDeliveryStatus.REQUEUED,
+                    message.message_id,
+                    message.job_id,
+                    "no external operation found; redelivery may safely resubmit",
+                )
+            self._persist_reconciled_result(message, lease_token, now, generation)
+            self._queue.ack(message)
+            return WorkerDeliveryResult(
+                WorkerDeliveryStatus.ACKED,
+                message.message_id,
+                message.job_id,
+                "existing external operation reconciled before acknowledgement",
+            )
+
+        self._persist_reconciliation_required(message, lease_token, now, outcome.provider)
+        self._queue.ack(message)
+        return WorkerDeliveryResult(
+            WorkerDeliveryStatus.ACKED,
+            message.message_id,
+            message.job_id,
+            "ambiguous non-reconcilable outcome recorded as reconciliation required",
+        )
+
+    def _persist_reconciled_result(
+        self,
+        message: QueueMessage,
+        lease_token: str,
+        now: datetime,
+        generation: GenerationResult,
+    ) -> None:
+        tx = self._transaction_factory()
+        try:
+            tx.assert_lease_owner(message.job_id, lease_token)
+            job = tx.jobs.get(message.job_id)
+            if job is None:
+                raise KeyError(f"generation job not found: {message.job_id}")
+            job.start()
+            started = GenerationAttempt.started(
+                attempt_id=f"{job.job_id}:attempt-{job.attempt_count}",
+                job_id=job.job_id,
+                attempt_number=job.attempt_count,
+                provider=generation.provider,
+                started_at=now,
+            )
+            completed = GenerationAttempt.succeeded(
+                attempt_id=started.attempt_id,
+                job_id=started.job_id,
+                attempt_number=started.attempt_number,
+                provider=generation.provider,
+                started_at=started.started_at,
+                completed_at=now,
+                provider_operation_id=generation.provider_operation_id,
+            )
+            job.succeed()
+            tx.attempts.add(started)
+            tx.attempts.complete(completed)
+            tx.jobs.save(job)
+            tx.append_event(JobEvent(
+                event_id=f"{job.job_id}:reconciled:{job.attempt_count}",
+                job_id=job.job_id,
+                event_type=JobEventType.RECONCILED,
+                occurred_at=now,
+                attempt_number=job.attempt_count,
+                metadata=(("provider", generation.provider),),
+            ))
+            tx.append_event(JobEvent(
+                event_id=f"{job.job_id}:succeeded:{job.attempt_count}",
+                job_id=job.job_id,
+                event_type=JobEventType.SUCCEEDED,
+                occurred_at=now,
+                attempt_number=job.attempt_count,
+            ))
+            tx.commit()
+        except Exception:
+            tx.rollback()
+            raise
+
+    def _persist_reconciliation_required(
+        self,
+        message: QueueMessage,
+        lease_token: str,
+        now: datetime,
+        provider: str,
+    ) -> None:
+        tx = self._transaction_factory()
+        try:
+            tx.assert_lease_owner(message.job_id, lease_token)
+            job = tx.jobs.get(message.job_id)
+            if job is None:
+                raise KeyError(f"generation job not found: {message.job_id}")
+            job.start()
+            failure = Failure.from_code(
+                "RECONCILIATION_REQUIRED",
+                "external provider outcome is ambiguous and cannot be safely retried",
+                provider=provider,
+            )
+            started = GenerationAttempt.started(
+                attempt_id=f"{job.job_id}:attempt-{job.attempt_count}",
+                job_id=job.job_id,
+                attempt_number=job.attempt_count,
+                provider=provider,
+                started_at=now,
+            )
+            failed = GenerationAttempt.failed(
+                attempt_id=started.attempt_id,
+                job_id=started.job_id,
+                attempt_number=started.attempt_number,
+                provider=provider,
+                started_at=started.started_at,
+                completed_at=now,
+                failure_code=failure.code.value,
+            )
+            job.fail(failure.code.value)
+            tx.attempts.add(started)
+            tx.attempts.complete(failed)
+            tx.jobs.save(job)
+            tx.append_event(JobEvent(
+                event_id=f"{job.job_id}:failed:{job.attempt_count}",
+                job_id=job.job_id,
+                event_type=JobEventType.FAILED,
+                occurred_at=now,
+                attempt_number=job.attempt_count,
+                failure_code=failure.code.value,
+                metadata=(("provider", provider),),
+            ))
+            tx.commit()
+        except Exception:
+            tx.rollback()
+            raise
