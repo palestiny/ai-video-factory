@@ -187,3 +187,42 @@ def test_running_job_is_recovered_after_expired_lease() -> None:
     assert jobs[job.job_id].status is GenerationStatus.SUCCEEDED
     assert [event.event_type.value for event in events][:2] == ["RECOVERED", "STARTED"]
     assert jobs[job.job_id].attempt_count == 2
+
+
+class FailOnceAckQueue(InMemoryGenerationJobQueue):
+    def __init__(self) -> None:
+        super().__init__()
+        self.fail_next_ack = True
+
+    def ack(self, message: QueueMessage) -> None:
+        if self.fail_next_ack:
+            self.fail_next_ack = False
+            raise RuntimeError("ack failed")
+        super().ack(message)
+
+
+def test_ack_failure_redelivers_harmlessly_after_durable_completion() -> None:
+    queue = FailOnceAckQueue()
+    leases = InMemoryWorkerLeaseRepository()
+    job = GenerationJob.create("job-1", "video", "scene-1/v1")
+    factory, jobs, attempts, events = make_factory(job, leases)
+    provider = IdempotentProvider()
+
+    first = queue.enqueue(job.job_id)
+    first_result = ExecuteGenerationDelivery(
+        queue, leases, factory, Resolver(provider), timedelta(minutes=1)
+    ).handle(first, "worker-a", datetime(2026, 1, 1, tzinfo=timezone.utc), {})
+
+    assert first_result.status is WorkerDeliveryStatus.REQUEUED
+    assert jobs[job.job_id].status is GenerationStatus.SUCCEEDED
+    assert len(provider.requests) == 1
+
+    redelivery = next(m for m in queue.pending() if m.job_id == job.job_id and m.message_id != first.message_id)
+    second_result = ExecuteGenerationDelivery(
+        queue, leases, factory, Resolver(provider), timedelta(minutes=1)
+    ).handle(redelivery, "worker-b", datetime(2026, 1, 1, 0, 1, tzinfo=timezone.utc), {})
+
+    assert second_result.status is WorkerDeliveryStatus.ACKED
+    assert len(provider.requests) == 1
+    assert len(attempts["job-1:attempt-1"]) == 2
+    assert events[-1].event_type.value == "SUCCEEDED"
