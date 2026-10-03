@@ -15,6 +15,11 @@ class GenerationRequest:
     constraints: Mapping[str, object] = field(default_factory=dict)
     idempotency_key: str = ""
 
+    # This key is stable across queue redelivery and retry. Provider adapters
+    # must forward it as their operation idempotency key when supported; when
+    # a provider cannot honor it, the adapter/infrastructure must expose an
+    # explicit reconciliation path rather than assuming duplicate execution is safe.
+
     def __post_init__(self) -> None:
         if not self.job_id.strip():
             raise ValueError("job_id cannot be blank")
