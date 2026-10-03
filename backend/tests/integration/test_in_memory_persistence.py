@@ -55,8 +55,8 @@ def test_submission_commit_failure_rolls_back_job_event_and_reservation() -> Non
     assert tx.events == ()
 
     clean = InMemoryPersistenceTransaction(
-        jobs=tx._jobs,
-        attempts=tx._attempts,
+        jobs=tx.jobs_state(),
+        attempts=tx.attempts_state(),
         events=list(tx.events),
         idempotency=tx.idempotency,
     )
@@ -115,7 +115,7 @@ def test_attempt_completion_preserves_immutable_history() -> None:
     tx.attempts.add(started)
     tx.attempts.complete(completed)
 
-    assert tx._attempts[started.attempt_id] == [started, completed]
+    assert tx.attempts.history(started.attempt_id) == (started, completed)
 
 
 def test_rollback_restores_attempts_and_events_to_transaction_snapshot() -> None:
@@ -152,5 +152,5 @@ def test_rollback_restores_attempts_and_events_to_transaction_snapshot() -> None
 
     tx.rollback()
 
-    assert tx.attempts._items == {}
+    assert tx.attempts.history(attempt.attempt_id) == ()
     assert [event.event_id for event in tx.events] == ["job-1:created"]
