@@ -108,7 +108,7 @@ class ExecuteGenerationDelivery:
                         attempt_number=job.attempt_count,
                     )
                 )
-                tx.jobs._items[job.job_id] = job  # test-double staging only; production repository owns update semantics
+                tx.jobs.save(job)
 
             result = ExecuteGenerationJob(tx, self._providers).execute(
                 ExecuteGenerationCommand(
