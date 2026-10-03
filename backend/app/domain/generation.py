@@ -209,6 +209,13 @@ class GenerationJob:
         self.failure_code = error_code
         self.status = GenerationStatus.FAILED
 
+    def recover_expired_lease(self) -> None:
+        if self.status is not GenerationStatus.RUNNING:
+            raise InvalidStateTransition(
+                f"cannot recover generation from {self.status.value}"
+            )
+        self.status = GenerationStatus.RETRYING
+
     def schedule_retry(self, policy: RetryPolicy) -> bool:
         if self.status is not GenerationStatus.FAILED:
             raise InvalidStateTransition(
