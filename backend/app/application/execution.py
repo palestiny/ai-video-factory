@@ -62,6 +62,8 @@ class ExecuteGenerationJob:
         if job is None:
             raise KeyError(f"generation job not found: {command.job_id}")
 
+        if command.lease_token is not None:
+            self._transaction.assert_lease_owner(job.job_id, command.lease_token)
         provider = self._providers.resolve(job.capability)
         job.start()
         started_at = datetime.now(timezone.utc)
