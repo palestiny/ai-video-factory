@@ -293,3 +293,75 @@ def test_lease_heartbeat_rejects_expired_or_stale_owner() -> None:
         acquired.lease_token,
         datetime(2026, 1, 1, 0, 1, 1, tzinfo=timezone.utc),
     ) is False
+
+
+def test_provider_runtime_heartbeat_keeps_lease_alive() -> None:
+    queue = InMemoryGenerationJobQueue()
+    leases = InMemoryWorkerLeaseRepository()
+    job = GenerationJob.create("job-heartbeat", "video", "scene-heartbeat/v1")
+    factory, jobs, _, _ = make_factory(job, leases)
+    provider = IdempotentProvider()
+    heartbeat_times: list[datetime] = []
+
+    def provider_executor(provider_obj, request, heartbeat):
+        heartbeat_at = datetime(2026, 1, 1, 0, 0, 30, tzinfo=timezone.utc)
+        assert heartbeat(heartbeat_at) is True
+        heartbeat_times.append(heartbeat_at)
+        return provider_obj.generate(request)
+
+    message = queue.enqueue(job.job_id)
+    result = ExecuteGenerationDelivery(
+        queue,
+        leases,
+        factory,
+        Resolver(provider),
+        timedelta(minutes=1),
+        provider_executor=provider_executor,
+    ).handle(
+        message,
+        "worker-a",
+        datetime(2026, 1, 1, tzinfo=timezone.utc),
+        {},
+    )
+
+    assert result.status is WorkerDeliveryStatus.ACKED
+    assert heartbeat_times == [datetime(2026, 1, 1, 0, 0, 30, tzinfo=timezone.utc)]
+    assert jobs[job.job_id].status is GenerationStatus.SUCCEEDED
+
+
+def test_failed_provider_runtime_heartbeat_requeues_without_finalizing() -> None:
+    queue = InMemoryGenerationJobQueue()
+    leases = InMemoryWorkerLeaseRepository()
+    job = GenerationJob.create("job-heartbeat-fail", "video", "scene-heartbeat-fail/v1")
+    factory, jobs, _, events = make_factory(job, leases)
+    provider = IdempotentProvider()
+    provider_called = False
+
+    def provider_executor(provider_obj, request, heartbeat):
+        nonlocal provider_called
+        provider_called = True
+        assert heartbeat(datetime(2026, 1, 1, 0, 1, tzinfo=timezone.utc)) is False
+        from app.application.execution import LeaseOwnershipLost
+        raise LeaseOwnershipLost("heartbeat lost ownership")
+
+    message = queue.enqueue(job.job_id)
+    result = ExecuteGenerationDelivery(
+        queue,
+        leases,
+        factory,
+        Resolver(provider),
+        timedelta(minutes=1),
+        provider_executor=provider_executor,
+    ).handle(
+        message,
+        "worker-a",
+        datetime(2026, 1, 1, tzinfo=timezone.utc),
+        {},
+    )
+
+    assert result.status is WorkerDeliveryStatus.REQUEUED
+    assert provider_called is True
+    assert provider.requests == []
+    assert jobs[job.job_id].status is GenerationStatus.QUEUED
+    assert events == []
+    assert queue.is_acked(message.message_id) is False
