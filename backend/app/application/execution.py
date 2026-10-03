@@ -142,7 +142,7 @@ class ExecuteGenerationJob:
             occurred_at=completed_at,
             attempt_number=job.attempt_count,
         ))
-        self._transaction.commit()
+        self._commit_or_rollback()
         return ExecuteGenerationResult(job, completed_attempt, generation, None)
 
     def _fail(
@@ -173,5 +173,12 @@ class ExecuteGenerationJob:
             attempt_number=job.attempt_count,
             failure_code=failure.code.value,
         ))
-        self._transaction.commit()
+        self._commit_or_rollback()
         return ExecuteGenerationResult(job, failed_attempt, None, failure)
+
+    def _commit_or_rollback(self) -> None:
+        try:
+            self._transaction.commit()
+        except Exception:
+            self._transaction.rollback()
+            raise
