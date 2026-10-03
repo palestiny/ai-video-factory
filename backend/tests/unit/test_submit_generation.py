@@ -48,6 +48,8 @@ class InMemoryTransaction:
         self._committed = True
 
     def rollback(self) -> None:
+        if self._committed:
+            return
         jobs, reservations, events = self._snapshot
         self.jobs.clear()
         self.jobs.update(jobs)
