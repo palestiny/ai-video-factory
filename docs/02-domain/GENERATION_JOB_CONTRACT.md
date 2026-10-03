@@ -112,3 +112,4 @@ Contract:
 - retry scheduling is deliberately not performed inside execution; a later invocation owns the next attempt.
 
 The provider is never selected by vendor name inside the use case. Provider resolution remains an application boundary, while concrete SDK adapters remain infrastructure concerns.
+\n\n## Execution transaction failure\n\nThe execution use case must rollback when its transaction commit fails. A provider result is not considered durably recorded until the job state, terminal attempt, and lifecycle event commit successfully. Commit errors are propagated after rollback so the worker boundary can handle recovery rather than treating the execution as completed.\n
