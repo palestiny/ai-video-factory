@@ -27,6 +27,11 @@ class InMemoryGenerationJobRepository(GenerationJobRepository):
         job = self._items.get(job_id)
         return deepcopy(job) if job is not None else None
 
+    def save(self, job: GenerationJob) -> None:
+        if job.job_id not in self._items:
+            raise KeyError(f"generation job not found: {job.job_id}")
+        self._items[job.job_id] = deepcopy(job)
+
 
 class InMemoryGenerationAttemptRepository(GenerationAttemptRepository):
     def __init__(self, items: dict[str, list[GenerationAttempt]]) -> None:
