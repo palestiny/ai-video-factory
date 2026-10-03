@@ -53,3 +53,19 @@ A provider adapter is not production-ready until it supplies:
 6. integration/contract tests covering duplicate submission and ambiguous recovery.
 
 No provider-specific implementation is selected by this contract. The contract exists so provider choice remains replaceable without weakening reliability semantics.
+
+
+## Worker integration
+
+The provider ambiguity contract is enforced at the worker delivery boundary:
+
+1. The provider raises AmbiguousProviderOutcome when the external result may exist but local completion is unknown.
+2. The current execution transaction is rolled back so an uncertain attempt is not falsely marked failed or succeeded.
+3. IDEMPOTENT outcomes are requeued with the same logical idempotency key.
+4. RECONCILABLE outcomes invoke GenerationReconciliationPort before resubmission:
+   - found -> the existing normalized result is durably recorded and the delivery is acknowledged;
+   - not found -> the message is requeued and a later delivery may submit again;
+   - lookup error/unknown -> the message is requeued without blind resubmission.
+5. NON_RECONCILABLE outcomes are recorded as terminal RECONCILIATION_REQUIRED failure and acknowledged. They are not silently redelivered into another billable provider call.
+
+RECONCILIATION_REQUIRED is deliberately non-retryable by the current domain retry policy. Operator/reconciliation workflows are a later operational capability; this slice prevents unsafe automatic duplication first.
