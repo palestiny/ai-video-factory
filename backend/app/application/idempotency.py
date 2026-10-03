@@ -86,3 +86,9 @@ class InMemoryIdempotencyRepository:
         )
         self._reservations[normalized_key] = reservation
         return reservation
+
+    def snapshot(self) -> dict[str, IdempotencyReservation]:
+        return dict(self._reservations)
+
+    def restore(self, reservations: dict[str, IdempotencyReservation]) -> None:
+        self._reservations = dict(reservations)
