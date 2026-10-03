@@ -53,6 +53,20 @@ class ExecuteGenerationDelivery:
         self._providers = providers
         self._lease_duration = lease_duration
 
+    def renew_lease(
+        self,
+        job_id: str,
+        lease_token: str,
+        now: datetime,
+    ) -> bool:
+        """Renew an active lease during long-running provider execution."""
+        return self._leases.renew(
+            job_id,
+            lease_token,
+            now,
+            self._lease_duration,
+        ) is not None
+
     def handle(
         self,
         message: QueueMessage,
