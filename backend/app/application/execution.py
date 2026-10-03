@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Callable, Protocol
 
 from app.application.persistence import ExecutionPersistenceTransaction
+from app.application.reconciliation import AmbiguousProviderOutcome
 from app.application.ports import GenerationRequest, GenerationResult
 from app.domain.events import JobEvent, JobEventType
 from app.domain.failure import Failure
@@ -102,6 +103,11 @@ class ExecuteGenerationJob:
             generation = self._provider_executor(provider, request)
         except ProviderExecutionError as exc:
             return self._fail(job, attempt, provider.provider_name, exc.failure, command.lease_token)
+        except AmbiguousProviderOutcome:
+            # Ambiguous external outcomes are recovered at the worker delivery boundary.
+            # They must not be normalized into UNKNOWN, because doing so could permit
+            # an unsafe duplicate billable provider operation.
+            raise
         except LeaseOwnershipLost:
             # Lease loss is a worker-control signal, not a provider failure.
             # It must reach the delivery boundary so the work is requeued.
