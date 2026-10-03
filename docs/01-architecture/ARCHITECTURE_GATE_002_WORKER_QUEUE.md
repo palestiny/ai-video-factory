@@ -187,12 +187,16 @@ Verified by deterministic tests:
 - provider commit-failure redelivery reuses the same stable idempotency key
 - lease loss and execution/persistence failures remain recoverable through requeue
 
+Lease renewal is exposed as an explicit worker heartbeat contract. The worker runtime is responsible for invoking it during long-running provider calls; the application service does not hide a scheduling/threading policy inside the domain boundary.
+
+Deterministic tests verify that renewal preserves the lease token for the current owner and rejects expired/stale owners.
+
 The deterministic provider test double demonstrates stable operation identity across redelivery. This does **not** prove that every future provider supports idempotency. Providers without idempotent operations still require explicit reconciliation before production adapter approval.
 
-A CI run against the first orchestration head failed on exception normalization in the in-memory persistence double; the root cause was fixed. The replacement CI run is pending/reporting separately and must pass before this gate is marked implementation-verified.
+The first CI run for orchestration failed on exception normalization in the in-memory persistence double; the root cause was fixed. Replacement CI run #158 passed on the current head. This verifies the deterministic implementation slice only; production queue, lease-store, and provider behavior remain unverified until real adapters are introduced.
 
 ## Gate result
 
-**PASS for boundary definition; implementation is in place and awaiting final CI verification.**
+**PASS for boundary definition; deterministic implementation slice verified by CI.**
 
 Production queue/provider adapters remain deferred until the deterministic contract suite and CI verification are green.
