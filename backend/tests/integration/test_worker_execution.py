@@ -226,3 +226,70 @@ def test_ack_failure_redelivers_harmlessly_after_durable_completion() -> None:
     assert len(provider.requests) == 1
     assert len(attempts["job-1:attempt-1"]) == 2
     assert events[-1].event_type.value == "SUCCEEDED"
+
+
+
+def test_lease_heartbeat_renews_active_owner_and_preserves_token() -> None:
+    queue = InMemoryGenerationJobQueue()
+    leases = InMemoryWorkerLeaseRepository()
+    job = GenerationJob.create("job-1", "video", "scene-1/v1")
+    factory, _, _, _ = make_factory(job, leases)
+    provider = IdempotentProvider()
+    delivery = ExecuteGenerationDelivery(
+        queue, leases, factory, Resolver(provider), timedelta(minutes=1)
+    )
+    acquired = leases.claim(
+        job.job_id,
+        "worker-a",
+        datetime(2026, 1, 1, tzinfo=timezone.utc),
+        timedelta(minutes=1),
+    )
+    assert acquired is not None
+
+    assert delivery.renew_lease(
+        job.job_id,
+        acquired.lease_token,
+        datetime(2026, 1, 1, 0, 0, 30, tzinfo=timezone.utc),
+    ) is True
+
+    current = leases.current(job.job_id)
+    assert current is not None
+    assert current.lease_token == acquired.lease_token
+    assert current.expires_at == datetime(2026, 1, 1, 0, 1, 30, tzinfo=timezone.utc)
+
+
+def test_lease_heartbeat_rejects_expired_or_stale_owner() -> None:
+    queue = InMemoryGenerationJobQueue()
+    leases = InMemoryWorkerLeaseRepository()
+    job = GenerationJob.create("job-1", "video", "scene-1/v1")
+    factory, _, _, _ = make_factory(job, leases)
+    provider = IdempotentProvider()
+    delivery = ExecuteGenerationDelivery(
+        queue, leases, factory, Resolver(provider), timedelta(minutes=1)
+    )
+    acquired = leases.claim(
+        job.job_id,
+        "worker-a",
+        datetime(2026, 1, 1, tzinfo=timezone.utc),
+        timedelta(minutes=1),
+    )
+    assert acquired is not None
+
+    assert delivery.renew_lease(
+        job.job_id,
+        acquired.lease_token,
+        datetime(2026, 1, 1, 0, 1, tzinfo=timezone.utc),
+    ) is False
+
+    replacement = leases.claim(
+        job.job_id,
+        "worker-b",
+        datetime(2026, 1, 1, 0, 1, tzinfo=timezone.utc),
+        timedelta(minutes=1),
+    )
+    assert replacement is not None
+    assert delivery.renew_lease(
+        job.job_id,
+        acquired.lease_token,
+        datetime(2026, 1, 1, 0, 1, 1, tzinfo=timezone.utc),
+    ) is False
