@@ -35,15 +35,18 @@ class Transaction:
     jobs: JobRepo
     attempts: AttemptRepo
     events: list[JobEvent]
+    commit_error: Exception | None = None
+    rollback_calls: int = 0
 
     def append_event(self, event: JobEvent) -> None:
         self.events.append(event)
 
     def commit(self) -> None:
-        pass
+        if self.commit_error is not None:
+            raise self.commit_error
 
     def rollback(self) -> None:
-        pass
+        self.rollback_calls += 1
 
 
 class FakeProvider:
@@ -131,3 +134,15 @@ def test_missing_job_is_rejected_before_provider_call() -> None:
         service.execute(ExecuteGenerationCommand("job-1", {}))
 
     assert provider.requests == []
+
+
+def test_commit_failure_rolls_back_execution_transaction() -> None:
+    provider = FakeProvider(GenerationResult("fake-video", "op-3", ("asset-3",)))
+    job = GenerationJob.create("job-1", "video", "scene-1/v1")
+    tx = Transaction(JobRepo(job), AttemptRepo(), [], commit_error=RuntimeError("commit failed"))
+    service = ExecuteGenerationJob(tx, Resolver(provider))
+
+    with pytest.raises(RuntimeError, match="commit failed"):
+        service.execute(ExecuteGenerationCommand("job-1", {"prompt": "commit failure"}))
+
+    assert tx.rollback_calls == 1
