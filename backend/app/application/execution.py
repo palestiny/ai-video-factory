@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import Protocol
 
 from app.application.persistence import ExecutionPersistenceTransaction
 from app.application.ports import GenerationRequest, GenerationResult
@@ -10,16 +11,16 @@ from app.domain.failure import Failure
 from app.domain.generation import GenerationAttempt, GenerationJob
 
 
-class GenerationProvider:
+class GenerationProvider(Protocol):
     provider_name: str
 
     def generate(self, request: GenerationRequest) -> GenerationResult:
-        raise NotImplementedError
+        ...
 
 
-class GenerationProviderResolver:
+class GenerationProviderResolver(Protocol):
     def resolve(self, capability: str) -> GenerationProvider:
-        raise NotImplementedError
+        ...
 
 
 @dataclass(frozen=True)
