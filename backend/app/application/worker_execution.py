@@ -136,7 +136,8 @@ class ExecuteGenerationDelivery:
                 "lease ownership lost before terminal persistence",
             )
         except Exception:
-            tx.rollback()
+            # ExecuteGenerationJob owns rollback for terminal persistence failures.
+            # Other pre-execution failures have no durable mutation to recover.
             self._queue.release_or_requeue(message)
             return WorkerDeliveryResult(
                 WorkerDeliveryStatus.REQUEUED,
