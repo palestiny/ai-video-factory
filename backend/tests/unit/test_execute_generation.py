@@ -21,13 +21,13 @@ class JobRepo:
 
 class AttemptRepo:
     def __init__(self) -> None:
-        self.items: dict[str, GenerationAttempt] = {}
+        self.items: dict[str, list[GenerationAttempt]] = {}
 
     def add(self, attempt: GenerationAttempt) -> None:
-        self.items[attempt.attempt_id] = attempt
+        self.items.setdefault(attempt.attempt_id, []).append(attempt)
 
-    def replace(self, attempt: GenerationAttempt) -> None:
-        self.items[attempt.attempt_id] = attempt
+    def complete(self, attempt: GenerationAttempt) -> None:
+        self.items.setdefault(attempt.attempt_id, []).append(attempt)
 
 
 @dataclass
