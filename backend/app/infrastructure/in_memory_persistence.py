@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 
+from app.application.execution import LeaseOwnershipLost
 from app.application.idempotency import InMemoryIdempotencyRepository
 from app.application.persistence import (
     ExecutionPersistenceTransaction,
@@ -97,7 +98,7 @@ class InMemoryPersistenceTransaction(
             raise RuntimeError("lease repository is required for ownership validation")
         lease = self._lease_repository.current(job_id) if hasattr(self._lease_repository, "current") else None
         if lease is None or lease.lease_token != lease_token:
-            raise RuntimeError(f"lease ownership lost: {job_id}")
+            raise LeaseOwnershipLost(f"lease ownership lost: {job_id}")
 
     def append_event(self, event: JobEvent) -> None:
         self._events.append(deepcopy(event))
