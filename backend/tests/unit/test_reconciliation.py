@@ -44,3 +44,23 @@ def test_reconciliation_query_requires_stable_operation_identity():
 
 def test_reconciliation_port_is_explicit_protocol():
     assert GenerationReconciliationPort
+
+
+def test_ambiguous_outcome_carries_recovery_contract_and_lookup_port():
+    from app.application.reconciliation import AmbiguousProviderOutcome
+
+    class Lookup:
+        def reconcile(self, query):
+            return None
+
+    lookup = Lookup()
+    contract = ProviderExecutionContract("provider-x", ProviderOperationSafety.RECONCILABLE)
+    outcome = AmbiguousProviderOutcome(
+        provider="provider-x",
+        contract=contract,
+        reconciliation=lookup,
+    )
+
+    assert outcome.provider == "provider-x"
+    assert outcome.contract.operation_safety is ProviderOperationSafety.RECONCILABLE
+    assert outcome.reconciliation is lookup
