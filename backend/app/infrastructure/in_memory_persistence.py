@@ -2,9 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 
-from app.application.idempotency import (
-    InMemoryIdempotencyRepository,
-)
+from app.application.idempotency import InMemoryIdempotencyRepository
 from app.application.persistence import (
     ExecutionPersistenceTransaction,
     GenerationAttemptRepository,
@@ -80,6 +78,12 @@ class InMemoryPersistenceTransaction(
     def events(self) -> tuple[JobEvent, ...]:
         return tuple(self._events)
 
+    def jobs_state(self) -> dict[str, GenerationJob]:
+        return deepcopy(self._jobs)
+
+    def attempts_state(self) -> dict[str, list[GenerationAttempt]]:
+        return deepcopy(self._attempts)
+
     def append_event(self, event: JobEvent) -> None:
         self._events.append(deepcopy(event))
 
@@ -94,12 +98,11 @@ class InMemoryPersistenceTransaction(
         self.rollback_count += 1
 
     def _capture(self) -> tuple[dict, dict, list, dict]:
-        reservations = self._idempotency.snapshot()
         return (
             deepcopy(self._jobs),
             deepcopy(self._attempts),
             deepcopy(self._events),
-            reservations,
+            self._idempotency.snapshot(),
         )
 
     def _restore(self, snapshot: tuple[dict, dict, list, dict]) -> None:
