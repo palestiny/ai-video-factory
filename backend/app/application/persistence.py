@@ -65,3 +65,7 @@ class SubmissionPersistenceTransaction(PersistenceTransaction, Protocol):
 
 class ExecutionPersistenceTransaction(PersistenceTransaction, Protocol):
     attempts: GenerationAttemptRepository
+
+    def assert_lease_owner(self, job_id: str, lease_token: str) -> None:
+        """Reject terminal persistence when the worker no longer owns the lease."""
+        ...
