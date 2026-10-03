@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Protocol
+from typing import Callable, Protocol
 
 from app.application.persistence import ExecutionPersistenceTransaction
 from app.application.ports import GenerationRequest, GenerationResult
@@ -53,9 +53,15 @@ class ProviderExecutionError(RuntimeError):
 class ExecuteGenerationJob:
     """Execute one provider attempt; retry scheduling stays outside this use case."""
 
-    def __init__(self, transaction: ExecutionPersistenceTransaction, providers: GenerationProviderResolver) -> None:
+    def __init__(
+        self,
+        transaction: ExecutionPersistenceTransaction,
+        providers: GenerationProviderResolver,
+        provider_executor: Callable[[GenerationProvider, GenerationRequest], GenerationResult] | None = None,
+    ) -> None:
         self._transaction = transaction
         self._providers = providers
+        self._provider_executor = provider_executor or (lambda provider, request: provider.generate(request))
 
     def execute(self, command: ExecuteGenerationCommand) -> ExecuteGenerationResult:
         job = self._transaction.jobs.get(command.job_id)
@@ -93,7 +99,7 @@ class ExecuteGenerationJob:
         )
 
         try:
-            generation = provider.generate(request)
+            generation = self._provider_executor(provider, request)
         except ProviderExecutionError as exc:
             return self._fail(job, attempt, provider.provider_name, exc.failure, command.lease_token)
         except Exception as exc:
