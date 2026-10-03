@@ -2,33 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Protocol
 
-from app.application.idempotency import IdempotencyRepository, ReservationStatus
+from app.application.persistence import SubmissionPersistenceTransaction
+from app.application.idempotency import ReservationStatus
 from app.domain.events import JobEvent, JobEventType
 from app.domain.generation import GenerationJob
-
-
-class GenerationJobRepository(Protocol):
-    def add(self, job: GenerationJob) -> None:
-        ...
-
-    def get(self, job_id: str) -> GenerationJob | None:
-        ...
-
-
-class Transaction(Protocol):
-    idempotency: IdempotencyRepository
-    jobs: GenerationJobRepository
-
-    def append_event(self, event: JobEvent) -> None:
-        ...
-
-    def commit(self) -> None:
-        ...
-
-    def rollback(self) -> None:
-        ...
 
 
 @dataclass(frozen=True)
@@ -52,7 +30,7 @@ class SubmitGenerationJob:
     reservation, job creation, and CREATED event must commit together.
     """
 
-    def __init__(self, transaction: Transaction) -> None:
+    def __init__(self, transaction: SubmissionPersistenceTransaction) -> None:
         self._transaction = transaction
 
     def execute(self, command: SubmitGenerationCommand) -> SubmitGenerationResult:
@@ -86,5 +64,9 @@ class SubmitGenerationJob:
                 occurred_at=datetime.now(timezone.utc),
             )
         )
-        self._transaction.commit()
+        try:
+            self._transaction.commit()
+        except Exception:
+            self._transaction.rollback()
+            raise
         return SubmitGenerationResult(job=job, created=True)
