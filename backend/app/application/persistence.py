@@ -16,6 +16,10 @@ class GenerationJobRepository(Protocol):
     def get(self, job_id: str) -> GenerationJob | None:
         ...
 
+    def save(self, job: GenerationJob) -> None:
+        """Stage the current aggregate state for the active transaction."""
+        ...
+
 
 class GenerationAttemptRepository(Protocol):
     """Durable repository for immutable generation attempt history.
