@@ -247,7 +247,16 @@ class ExecuteGenerationDelivery:
                     message.job_id,
                     "no external operation found; redelivery may safely resubmit",
                 )
-            self._persist_reconciled_result(message, lease_token, now, generation)
+            try:
+                self._persist_reconciled_result(message, lease_token, now, generation)
+            except Exception:
+                self._queue.release_or_requeue(message)
+                return WorkerDeliveryResult(
+                    WorkerDeliveryStatus.REQUEUED,
+                    message.message_id,
+                    message.job_id,
+                    "reconciled result could not be durably persisted",
+                )
             self._queue.ack(message)
             return WorkerDeliveryResult(
                 WorkerDeliveryStatus.ACKED,
@@ -256,7 +265,16 @@ class ExecuteGenerationDelivery:
                 "existing external operation reconciled before acknowledgement",
             )
 
-        self._persist_reconciliation_required(message, lease_token, now, outcome.provider)
+        try:
+            self._persist_reconciliation_required(message, lease_token, now, outcome.provider)
+        except Exception:
+            self._queue.release_or_requeue(message)
+            return WorkerDeliveryResult(
+                WorkerDeliveryStatus.REQUEUED,
+                message.message_id,
+                message.job_id,
+                "reconciliation-required outcome could not be durably persisted",
+            )
         self._queue.ack(message)
         return WorkerDeliveryResult(
             WorkerDeliveryStatus.ACKED,
