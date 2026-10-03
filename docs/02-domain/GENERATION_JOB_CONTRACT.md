@@ -96,3 +96,19 @@ An event may include attempt number, normalized failure code, and small key/valu
 ## Cancellation
 
 A logical job may be cancelled from QUEUED, RUNNING, or RETRYING. SUCCEEDED and FAILED are terminal outcomes and cannot be converted to CANCELLED. Provider interruption and worker cleanup remain application/infrastructure responsibilities.
+
+
+## Execution Use Case
+
+The first application execution slice now exists in `backend/app/application/execution.py`.
+
+Contract:
+- load one durable logical job by ID;
+- resolve a provider through a capability-neutral resolver;
+- transition the job to RUNNING and create an immutable STARTED attempt;
+- invoke the normalized `GenerationRequest` provider port;
+- on success, persist a terminal immutable attempt, transition the job to SUCCEEDED, and append SUCCEEDED;
+- on provider or unexpected failure, normalize a `Failure`, persist a terminal failed attempt, transition the job to FAILED, and append FAILED;
+- retry scheduling is deliberately not performed inside execution; a later invocation owns the next attempt.
+
+The provider is never selected by vendor name inside the use case. Provider resolution remains an application boundary, while concrete SDK adapters remain infrastructure concerns.
