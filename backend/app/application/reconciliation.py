@@ -72,3 +72,20 @@ def decide_ambiguous_recovery(contract: ProviderExecutionContract) -> Reconcilia
     if contract.operation_safety is ProviderOperationSafety.RECONCILABLE:
         return ReconciliationDecision(False, True, "provider requires reconciliation before retry")
     return ReconciliationDecision(False, True, "provider cannot safely resolve an ambiguous operation")
+
+
+class AmbiguousProviderOutcome(RuntimeError):
+    """Provider execution may have created an external operation, but the outcome is unknown."""
+
+    def __init__(
+        self,
+        *,
+        provider: str,
+        contract: ProviderExecutionContract,
+        reconciliation: GenerationReconciliationPort | None = None,
+        message: str = "provider operation outcome is ambiguous",
+    ) -> None:
+        super().__init__(message)
+        self.provider = provider
+        self.contract = contract
+        self.reconciliation = reconciliation
