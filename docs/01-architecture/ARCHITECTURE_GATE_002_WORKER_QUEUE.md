@@ -170,8 +170,29 @@ This gate does not choose:
 - provider vendor
 - provider-specific cancellation behavior
 
+## Implementation verification status
+
+The worker orchestration boundary is now implemented as a provider/queue-neutral application service.
+
+Verified by deterministic tests:
+
+- queue delivery claims a worker lease before execution
+- durable job state is re-read before provider execution
+- cancelled and already-completed jobs are acknowledged without provider execution
+- stale lease owners are rejected before provider side effects and again before terminal persistence
+- terminal job state is explicitly saved inside the execution transaction
+- durable success is committed before queue acknowledgement
+- acknowledgement failure causes redelivery without a second provider operation when the stable provider idempotency key is honored
+- expired RUNNING jobs can be recovered into RETRYING before a new attempt
+- provider commit-failure redelivery reuses the same stable idempotency key
+- lease loss and execution/persistence failures remain recoverable through requeue
+
+The deterministic provider test double demonstrates stable operation identity across redelivery. This does **not** prove that every future provider supports idempotency. Providers without idempotent operations still require explicit reconciliation before production adapter approval.
+
+A CI run against the first orchestration head failed on exception normalization in the in-memory persistence double; the root cause was fixed. The replacement CI run is pending/reporting separately and must pass before this gate is marked implementation-verified.
+
 ## Gate result
 
-**PASS for boundary definition; implementation contract tests are the next required slice.**
+**PASS for boundary definition; implementation is in place and awaiting final CI verification.**
 
-Production queue/provider adapters remain deferred until those contracts are proven.
+Production queue/provider adapters remain deferred until the deterministic contract suite and CI verification are green.
