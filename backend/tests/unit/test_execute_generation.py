@@ -117,6 +117,19 @@ def test_normalized_provider_failure_is_recorded_without_retrying_here() -> None
     assert tx.events[-1].failure_code == FailureCode.RATE_LIMITED.value
 
 
+
+def test_ambiguous_provider_outcome_propagates_to_worker_boundary() -> None:
+    contract = ProviderExecutionContract("fake-video", ProviderOperationSafety.RECONCILABLE)
+    outcome = AmbiguousProviderOutcome(provider="fake-video", contract=contract)
+    service, tx = make_service(FakeProvider(error=outcome))
+
+    with pytest.raises(AmbiguousProviderOutcome) as raised:
+        service.execute(ExecuteGenerationCommand("job-1", {"prompt": "uncertain"}))
+
+    assert raised.value.contract is contract
+    assert tx.rollback_calls == 0
+
+
 def test_unknown_provider_exception_is_normalized_to_unknown_failure() -> None:
     service, _ = make_service(FakeProvider(error=RuntimeError("boom")))
 
