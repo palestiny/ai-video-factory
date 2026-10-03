@@ -23,3 +23,10 @@
 **Decision:** production pipeline is the first milestone.
 
 **Reason:** validate the core production engine before adding distribution and feedback loops.
+
+
+## ADR-005 — Provider recovery safety is explicit
+
+**Decision:** provider adapters must declare whether repeated logical operations are idempotent, reconcilable, or non-reconcilable. Ambiguous external outcomes must not be treated as ordinary retryable failures by default.
+
+**Reason:** a worker crash or persistence failure can leave a billable provider operation existing even when local completion is unknown. Explicit recovery semantics prevent the orchestration layer from assuming duplicate execution is safe.
