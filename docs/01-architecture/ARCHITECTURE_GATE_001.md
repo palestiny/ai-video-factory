@@ -168,3 +168,7 @@ The shared contract covers:
 - execution transactions that include attempt persistence
 
 No database, ORM, queue, or vendor-specific storage technology is selected by this gate. Concrete persistence remains an infrastructure decision after the contract is proven by tests.
+
+### Immutable attempt persistence decision
+
+Generation attempts remain append-only at the persistence boundary. The application records the initial RUNNING attempt with `add()`, then records its terminal immutable record with `complete()`. The contract intentionally does not expose a `replace()` operation, because replacing a committed attempt would conflict with the reliability requirement that attempt history remain immutable and auditable.
