@@ -105,7 +105,9 @@ external side effect may already exist
 
 A retry must therefore not blindly issue a second billable/provider operation.
 
-The provider contract must support a stable operation idempotency key or an equivalent lookup/reconciliation mechanism where the provider supports it. Where a provider cannot guarantee this, recovery must be treated as an explicit reconciliation problem rather than silently assumed safe.
+The provider contract must support a stable operation idempotency key or an equivalent lookup/reconciliation mechanism where the provider supports it. This is now an explicit application contract in `backend/app/application/reconciliation.py` and `docs/03-contracts/PROVIDER_RECONCILIATION_CONTRACT.md`.
+
+Each production adapter must declare one recovery mode: `IDEMPOTENT`, `RECONCILABLE`, or `NON_RECONCILABLE`. `RECONCILABLE` adapters must reconcile before resubmission; `NON_RECONCILABLE` adapters must not silently treat an ambiguous outcome as retry-safe.
 
 ## Acknowledgement rule
 
@@ -157,6 +159,8 @@ The next implementation slice is accepted only when deterministic tests prove:
 - acknowledgement after durable completion is safe to repeat
 - persistence failure leaves work recoverable
 - provider-side-effect ambiguity is explicitly represented
+- provider recovery safety is declared as idempotent, reconcilable, or non-reconcilable
+- reconcilable recovery has an explicit lookup port and stable operation identity
 
 ## Non-decisions
 
@@ -191,12 +195,12 @@ Lease renewal is exposed as an explicit worker heartbeat contract. The worker ru
 
 Deterministic tests verify that renewal preserves the lease token for the current owner and rejects expired/stale owners.
 
-The deterministic provider test double demonstrates stable operation identity across redelivery. This does **not** prove that every future provider supports idempotency. Providers without idempotent operations still require explicit reconciliation before production adapter approval.
+The deterministic provider test double demonstrates stable operation identity across redelivery. This does **not** prove that every future provider supports idempotency. Providers without native idempotent operations still require explicit reconciliation before production adapter approval. The deterministic contract now models this distinction instead of treating every provider as retry-safe.
 
 The first CI run for orchestration failed on exception normalization in the in-memory persistence double; the root cause was fixed. Replacement CI run #158 passed on the current head. This verifies the deterministic implementation slice only; production queue, lease-store, and provider behavior remain unverified until real adapters are introduced.
 
 ## Gate result
 
-**PASS for boundary definition; deterministic implementation slice verified by CI.**
+**PASS for boundary definition; deterministic implementation slice verified by CI. Provider reconciliation safety contract is now established; concrete provider adapters remain deferred.**
 
 Production queue/provider adapters remain deferred until the deterministic contract suite and CI verification are green.
