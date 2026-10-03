@@ -147,3 +147,7 @@ Idempotency reservation and creation/persistence of the corresponding logical jo
 
 Generation execution is now represented as an application use case rather than a provider-specific service. The use case resolves a provider by capability, creates an immutable attempt, invokes the normalized provider port, normalizes failures, records terminal attempt state, and emits lifecycle events. Retry scheduling remains outside this boundary so queue/backoff infrastructure is not coupled to provider execution.
 \n\n### Execution transaction safety\n\nThe execution boundary treats commit failure as a transaction failure: commit exceptions trigger rollback before the exception is propagated. This keeps provider execution from reporting success/failure as durably completed when the persistence transaction did not commit.\n
+
+### Retry scheduling progress
+
+Retry eligibility is now separated from retry dispatch. The application use case transitions a failed logical job to RETRYING only when the domain policy allows another attempt and records RETRY_SCHEDULED atomically with the state change. Queue delay, exponential backoff/jitter, and worker dispatch remain infrastructure concerns.
