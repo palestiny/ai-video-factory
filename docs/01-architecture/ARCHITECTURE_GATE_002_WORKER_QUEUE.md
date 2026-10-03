@@ -201,6 +201,17 @@ CI run #185 passed on the current head after fixing the lease-loss control-flow 
 
 ## Gate result
 
-**PASS for boundary definition; deterministic implementation slice verified by CI. Provider reconciliation safety contract is now established; concrete provider adapters remain deferred.**
+**PASS for boundary definition; deterministic implementation slice verified by CI, including provider ambiguity handling. Concrete provider adapters remain deferred.**
 
 Production queue/provider adapters remain deferred until the deterministic contract suite and CI verification are green.
+
+
+### Provider ambiguity implementation slice
+
+The worker now owns the recovery decision after an ambiguous provider outcome. The execution transaction is rolled back first, then the recovery mode is applied:
+
+- IDEMPOTENT -> requeue with the same stable operation key.
+- RECONCILABLE -> reconcile before resubmission; found results are committed without a second provider call, not-found results are requeued, and lookup errors never trigger blind submission.
+- NON_RECONCILABLE -> persist terminal RECONCILIATION_REQUIRED and acknowledge rather than risking a duplicate billable operation.
+
+Deterministic integration tests cover all three modes plus stable reconciliation identity.
