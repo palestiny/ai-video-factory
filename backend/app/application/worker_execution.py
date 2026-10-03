@@ -12,6 +12,7 @@ from app.application.execution import (
     LeaseOwnershipLost,
 )
 from app.application.persistence import ExecutionPersistenceTransaction
+from app.application.ports import GenerationRequest, GenerationResult
 from app.application.worker import GenerationJobQueue, QueueMessage, WorkerLeaseRepository
 from app.domain.events import JobEvent, JobEventType
 from app.domain.generation import GenerationStatus
@@ -44,6 +45,7 @@ class ExecuteGenerationDelivery:
         transaction_factory: Callable[[], ExecutionPersistenceTransaction],
         providers: GenerationProviderResolver,
         lease_duration: timedelta,
+        provider_executor: Callable[[object, GenerationRequest, Callable[[datetime], bool]], GenerationResult] | None = None,
     ) -> None:
         if lease_duration <= timedelta(0):
             raise ValueError("lease_duration must be positive")
@@ -52,6 +54,7 @@ class ExecuteGenerationDelivery:
         self._transaction_factory = transaction_factory
         self._providers = providers
         self._lease_duration = lease_duration
+        self._provider_executor = provider_executor
 
     def renew_lease(
         self,
@@ -124,7 +127,24 @@ class ExecuteGenerationDelivery:
                 )
                 tx.jobs.save(job)
 
-            result = ExecuteGenerationJob(tx, self._providers).execute(
+            execution = ExecuteGenerationJob(
+                tx,
+                self._providers,
+                provider_executor=(
+                    None
+                    if self._provider_executor is None
+                    else lambda provider, request: self._provider_executor(
+                        provider,
+                        request,
+                        lambda heartbeat_at: self.renew_lease(
+                            message.job_id,
+                            lease.lease_token,
+                            heartbeat_at,
+                        ),
+                    )
+                ),
+            )
+            result = execution.execute(
                 ExecuteGenerationCommand(
                     job_id=message.job_id,
                     inputs=inputs,
