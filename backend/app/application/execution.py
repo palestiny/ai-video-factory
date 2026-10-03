@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Callable, Protocol
+from typing import Protocol
 
 from app.application.persistence import ExecutionPersistenceTransaction
 from app.application.ports import GenerationRequest, GenerationResult
@@ -30,7 +30,6 @@ class ExecuteGenerationCommand:
     references: tuple[str, ...] = ()
     constraints: dict[str, object] | None = None
     lease_token: str | None = None
-    heartbeat: Callable[[datetime], bool] | None = None
 
 
 @dataclass(frozen=True)
@@ -95,10 +94,6 @@ class ExecuteGenerationJob:
 
         try:
             generation = provider.generate(request)
-            if command.heartbeat is not None:
-                heartbeat_ok = command.heartbeat(datetime.now(timezone.utc))
-                if not heartbeat_ok:
-                    raise LeaseOwnershipLost("worker lease heartbeat failed")
         except ProviderExecutionError as exc:
             return self._fail(job, attempt, provider.provider_name, exc.failure, command.lease_token)
         except Exception as exc:
