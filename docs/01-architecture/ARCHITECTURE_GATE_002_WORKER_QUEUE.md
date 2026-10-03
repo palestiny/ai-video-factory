@@ -197,7 +197,7 @@ Deterministic tests verify that renewal preserves the lease token for the curren
 
 The deterministic provider test double demonstrates stable operation identity across redelivery. This does **not** prove that every future provider supports idempotency. Providers without native idempotent operations still require explicit reconciliation before production adapter approval. The deterministic contract now models this distinction instead of treating every provider as retry-safe.
 
-The first CI run for orchestration failed on exception normalization in the in-memory persistence double; the root cause was fixed. Replacement CI run #158 passed on the current head. This verifies the deterministic implementation slice only; production queue, lease-store, and provider behavior remain unverified until real adapters are introduced.
+CI run #185 passed on the current head after fixing the lease-loss control-flow bug: `LeaseOwnershipLost` is now propagated to the worker delivery boundary instead of being normalized into a provider failure. This verifies the deterministic implementation slice only; production queue, lease-store, and provider behavior remain unverified until real adapters are introduced.
 
 ## Gate result
 
