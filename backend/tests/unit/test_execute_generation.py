@@ -6,6 +6,7 @@ import pytest
 
 from app.application.execution import ExecuteGenerationCommand, ExecuteGenerationJob, ProviderExecutionError
 from app.application.ports import GenerationRequest, GenerationResult
+from app.application.reconciliation import AmbiguousProviderOutcome, ProviderExecutionContract, ProviderOperationSafety
 from app.domain.events import JobEvent
 from app.domain.failure import Failure, FailureCode
 from app.domain.generation import GenerationAttempt, GenerationJob
