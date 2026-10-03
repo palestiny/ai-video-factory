@@ -136,8 +136,8 @@ class ExecuteGenerationJob:
         lease_token: str | None = None,
     ) -> ExecuteGenerationResult:
         completed_at = datetime.now(timezone.utc)
-        if command.lease_token is not None:
-            self._transaction.assert_lease_owner(job.job_id, command.lease_token)
+        if lease_token is not None:
+            self._transaction.assert_lease_owner(job.job_id, lease_token)
         job.fail(failure.code.value)
         failed_attempt = GenerationAttempt.failed(
             attempt_id=attempt.attempt_id,
