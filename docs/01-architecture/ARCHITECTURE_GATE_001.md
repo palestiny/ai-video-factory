@@ -141,3 +141,8 @@ Still intentionally deferred:
 ### Transaction boundary note
 
 Idempotency reservation and creation/persistence of the corresponding logical job must share an atomic application/infrastructure transaction in production. A reservation must never survive a failed job creation as an orphaned claim.
+
+
+### Execution Use Case Progress
+
+Generation execution is now represented as an application use case rather than a provider-specific service. The use case resolves a provider by capability, creates an immutable attempt, invokes the normalized provider port, normalizes failures, records terminal attempt state, and emits lifecycle events. Retry scheduling remains outside this boundary so queue/backoff infrastructure is not coupled to provider execution.
