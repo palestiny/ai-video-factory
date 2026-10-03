@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 from app.application.ports import GenerationRequest, GenerationResult
 from app.application.worker import QueueMessage
 from app.application.worker_execution import ExecuteGenerationDelivery, WorkerDeliveryStatus
+from app.domain.events import JobEventType
 from app.domain.generation import GenerationJob, GenerationStatus
 from app.infrastructure.in_memory_persistence import InMemoryPersistenceTransaction
 from app.infrastructure.in_memory_worker import InMemoryGenerationJobQueue, InMemoryWorkerLeaseRepository
@@ -365,3 +366,160 @@ def test_failed_provider_runtime_heartbeat_requeues_without_finalizing() -> None
     assert jobs[job.job_id].status is GenerationStatus.QUEUED
     assert events == []
     assert queue.is_acked(message.message_id) is False
+
+
+class AmbiguousProvider:
+    provider_name = "ambiguous-video"
+
+    def __init__(self, contract, reconciliation=None):
+        self.execution_contract = contract
+        self.reconciliation = reconciliation
+        self.requests = []
+
+    def generate(self, request):
+        from app.application.reconciliation import AmbiguousProviderOutcome
+        self.requests.append(request)
+        raise AmbiguousProviderOutcome(
+            provider=self.provider_name,
+            contract=self.execution_contract,
+            reconciliation=self.reconciliation,
+        )
+
+
+class RecoveryResolver:
+    def __init__(self, provider):
+        self.provider = provider
+
+    def resolve(self, capability):
+        return self.provider
+
+
+class FoundReconciliation:
+    def __init__(self, result):
+        self.result = result
+        self.queries = []
+
+    def reconcile(self, query):
+        self.queries.append(query)
+        return self.result
+
+
+def test_ambiguous_idempotent_outcome_requeues_with_stable_key():
+    from app.application.reconciliation import ProviderExecutionContract, ProviderOperationSafety
+
+    queue = InMemoryGenerationJobQueue()
+    leases = InMemoryWorkerLeaseRepository()
+    job = GenerationJob.create("job-ambiguous-idem", "video", "scene-ambiguous/v1")
+    factory, jobs, _, _ = make_factory(job, leases)
+    provider = AmbiguousProvider(
+        ProviderExecutionContract("ambiguous-video", ProviderOperationSafety.IDEMPOTENT)
+    )
+
+    message = queue.enqueue(job.job_id)
+    result = ExecuteGenerationDelivery(
+        queue, leases, factory, RecoveryResolver(provider), timedelta(minutes=1)
+    ).handle(message, "worker-a", datetime(2026, 1, 1, tzinfo=timezone.utc), {})
+
+    assert result.status is WorkerDeliveryStatus.REQUEUED
+    assert jobs[job.job_id].status is GenerationStatus.QUEUED
+    assert provider.requests[0].idempotency_key == "scene-ambiguous/v1"
+
+
+def test_reconcilable_found_completes_without_second_provider_call():
+    from app.application.reconciliation import ProviderExecutionContract, ProviderOperationSafety
+
+    queue = InMemoryGenerationJobQueue()
+    leases = InMemoryWorkerLeaseRepository()
+    job = GenerationJob.create("job-ambiguous-found", "video", "scene-found/v1")
+    factory, jobs, attempts, events = make_factory(job, leases)
+    generation = GenerationResult("ambiguous-video", "op-existing", ("asset-existing",))
+    reconciliation = FoundReconciliation(generation)
+    provider = AmbiguousProvider(
+        ProviderExecutionContract("ambiguous-video", ProviderOperationSafety.RECONCILABLE),
+        reconciliation,
+    )
+
+    message = queue.enqueue(job.job_id)
+    result = ExecuteGenerationDelivery(
+        queue, leases, factory, RecoveryResolver(provider), timedelta(minutes=1)
+    ).handle(message, "worker-a", datetime(2026, 1, 1, tzinfo=timezone.utc), {})
+
+    assert result.status is WorkerDeliveryStatus.ACKED
+    assert jobs[job.job_id].status is GenerationStatus.SUCCEEDED
+    assert len(provider.requests) == 1
+    assert reconciliation.queries[0].idempotency_key == "scene-found/v1"
+    assert attempts["job-ambiguous-found:attempt-1"][-1].provider_operation_id == "op-existing"
+    assert events[-2].event_type is JobEventType.RECONCILED
+
+
+def test_reconcilable_not_found_requeues_without_blind_retry():
+    from app.application.reconciliation import ProviderExecutionContract, ProviderOperationSafety
+
+    queue = InMemoryGenerationJobQueue()
+    leases = InMemoryWorkerLeaseRepository()
+    job = GenerationJob.create("job-ambiguous-missing", "video", "scene-missing/v1")
+    factory, jobs, _, _ = make_factory(job, leases)
+
+    class MissingReconciliation:
+        def reconcile(self, query):
+            assert query.idempotency_key == "scene-missing/v1"
+            return None
+
+    provider = AmbiguousProvider(
+        ProviderExecutionContract("ambiguous-video", ProviderOperationSafety.RECONCILABLE),
+        MissingReconciliation(),
+    )
+    message = queue.enqueue(job.job_id)
+    result = ExecuteGenerationDelivery(
+        queue, leases, factory, RecoveryResolver(provider), timedelta(minutes=1)
+    ).handle(message, "worker-a", datetime(2026, 1, 1, tzinfo=timezone.utc), {})
+
+    assert result.status is WorkerDeliveryStatus.REQUEUED
+    assert jobs[job.job_id].status is GenerationStatus.QUEUED
+
+
+def test_reconciliation_lookup_error_requeues_without_blind_retry():
+    from app.application.reconciliation import ProviderExecutionContract, ProviderOperationSafety
+
+    queue = InMemoryGenerationJobQueue()
+    leases = InMemoryWorkerLeaseRepository()
+    job = GenerationJob.create("job-ambiguous-error", "video", "scene-error/v1")
+    factory, jobs, _, _ = make_factory(job, leases)
+
+    class ErrorReconciliation:
+        def reconcile(self, query):
+            raise RuntimeError("provider lookup unavailable")
+
+    provider = AmbiguousProvider(
+        ProviderExecutionContract("ambiguous-video", ProviderOperationSafety.RECONCILABLE),
+        ErrorReconciliation(),
+    )
+    message = queue.enqueue(job.job_id)
+    result = ExecuteGenerationDelivery(
+        queue, leases, factory, RecoveryResolver(provider), timedelta(minutes=1)
+    ).handle(message, "worker-a", datetime(2026, 1, 1, tzinfo=timezone.utc), {})
+
+    assert result.status is WorkerDeliveryStatus.REQUEUED
+    assert jobs[job.job_id].status is GenerationStatus.QUEUED
+
+
+def test_non_reconcilable_ambiguous_outcome_becomes_reconciliation_required():
+    from app.application.reconciliation import ProviderExecutionContract, ProviderOperationSafety
+
+    queue = InMemoryGenerationJobQueue()
+    leases = InMemoryWorkerLeaseRepository()
+    job = GenerationJob.create("job-ambiguous-terminal", "video", "scene-terminal/v1")
+    factory, jobs, attempts, events = make_factory(job, leases)
+    provider = AmbiguousProvider(
+        ProviderExecutionContract("ambiguous-video", ProviderOperationSafety.NON_RECONCILABLE)
+    )
+
+    message = queue.enqueue(job.job_id)
+    result = ExecuteGenerationDelivery(
+        queue, leases, factory, RecoveryResolver(provider), timedelta(minutes=1)
+    ).handle(message, "worker-a", datetime(2026, 1, 1, tzinfo=timezone.utc), {})
+
+    assert result.status is WorkerDeliveryStatus.ACKED
+    assert jobs[job.job_id].status is GenerationStatus.FAILED
+    assert attempts["job-ambiguous-terminal:attempt-1"][-1].failure_code == "RECONCILIATION_REQUIRED"
+    assert events[-1].failure_code == "RECONCILIATION_REQUIRED"
