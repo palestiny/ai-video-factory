@@ -113,3 +113,18 @@ Contract:
 
 The provider is never selected by vendor name inside the use case. Provider resolution remains an application boundary, while concrete SDK adapters remain infrastructure concerns.
 \n\n## Execution transaction failure\n\nThe execution use case must rollback when its transaction commit fails. A provider result is not considered durably recorded until the job state, terminal attempt, and lifecycle event commit successfully. Commit errors are propagated after rollback so the worker boundary can handle recovery rather than treating the execution as completed.\n
+
+## Retry Scheduling Use Case
+
+The application retry boundary is implemented in `backend/app/application/retry.py`.
+
+Contract:
+- load one failed GenerationJob;
+- ask the domain RetryPolicy whether another attempt is allowed;
+- when allowed, transition the job to RETRYING and append RETRY_SCHEDULED;
+- when not allowed, leave the job FAILED and do not emit a retry event;
+- commit the state transition and event atomically;
+- rollback and propagate commit failures;
+- do not calculate queue delays or dispatch work here.
+
+This deliberately separates the domain decision to retry from infrastructure concerns such as exponential backoff, jitter, delayed queues, worker dispatch, and recovery.
