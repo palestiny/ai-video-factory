@@ -11,6 +11,7 @@ from app.application.persistence import (
 )
 from app.domain.events import JobEvent
 from app.domain.generation import GenerationAttempt, GenerationJob
+from app.application.worker import WorkerLeaseRepository
 
 
 class InMemoryGenerationJobRepository(GenerationJobRepository):
@@ -61,6 +62,7 @@ class InMemoryPersistenceTransaction(
         attempts: dict[str, list[GenerationAttempt]] | None = None,
         events: list[JobEvent] | None = None,
         idempotency: InMemoryIdempotencyRepository | None = None,
+        lease_repository: WorkerLeaseRepository | None = None,
     ) -> None:
         self._jobs = jobs if jobs is not None else {}
         self._attempts = attempts if attempts is not None else {}
@@ -69,6 +71,7 @@ class InMemoryPersistenceTransaction(
         self.jobs = InMemoryGenerationJobRepository(self._jobs)
         self.attempts = InMemoryGenerationAttemptRepository(self._attempts)
         self.idempotency = self._idempotency
+        self._lease_repository = lease_repository
         self._snapshot = self._capture()
         self.commit_count = 0
         self.rollback_count = 0
@@ -83,6 +86,13 @@ class InMemoryPersistenceTransaction(
 
     def attempts_state(self) -> dict[str, list[GenerationAttempt]]:
         return deepcopy(self._attempts)
+
+    def assert_lease_owner(self, job_id: str, lease_token: str) -> None:
+        if self._lease_repository is None:
+            raise RuntimeError("lease repository is required for ownership validation")
+        lease = self._lease_repository.current(job_id) if hasattr(self._lease_repository, "current") else None
+        if lease is None or lease.lease_token != lease_token:
+            raise RuntimeError(f"lease ownership lost: {job_id}")
 
     def append_event(self, event: JobEvent) -> None:
         self._events.append(deepcopy(event))
