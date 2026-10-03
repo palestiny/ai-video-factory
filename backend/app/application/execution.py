@@ -40,6 +40,10 @@ class ExecuteGenerationResult:
     failure: Failure | None
 
 
+class LeaseOwnershipLost(RuntimeError):
+    """The worker lost its lease before terminal outcome persistence."""
+
+
 class ProviderExecutionError(RuntimeError):
     def __init__(self, failure: Failure) -> None:
         super().__init__(failure.message)
@@ -89,13 +93,14 @@ class ExecuteGenerationJob:
         try:
             generation = provider.generate(request)
         except ProviderExecutionError as exc:
-            return self._fail(job, attempt, provider.provider_name, exc.failure)
+            return self._fail(job, attempt, provider.provider_name, exc.failure, command.lease_token)
         except Exception as exc:
             return self._fail(
                 job,
                 attempt,
                 provider.provider_name,
                 Failure.from_code("UNKNOWN", str(exc) or "provider execution failed", provider=provider.provider_name),
+                command.lease_token,
             )
 
         completed_at = datetime.now(timezone.utc)
@@ -128,13 +133,12 @@ class ExecuteGenerationJob:
         attempt: GenerationAttempt,
         provider: str,
         failure: Failure,
+        lease_token: str | None = None,
     ) -> ExecuteGenerationResult:
         completed_at = datetime.now(timezone.utc)
-        # A provider failure still needs ownership validation before durable terminal state.
-        # Without it, a stale worker could overwrite a newer owner's outcome.
+        if command.lease_token is not None:
+            self._transaction.assert_lease_owner(job.job_id, command.lease_token)
         job.fail(failure.code.value)
-        if attempt is not None:
-            pass
         failed_attempt = GenerationAttempt.failed(
             attempt_id=attempt.attempt_id,
             job_id=job.job_id,
