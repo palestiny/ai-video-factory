@@ -102,6 +102,10 @@ class ExecuteGenerationJob:
             generation = self._provider_executor(provider, request)
         except ProviderExecutionError as exc:
             return self._fail(job, attempt, provider.provider_name, exc.failure, command.lease_token)
+        except LeaseOwnershipLost:
+            # Lease loss is a worker-control signal, not a provider failure.
+            # It must reach the delivery boundary so the work is requeued.
+            raise
         except Exception as exc:
             return self._fail(
                 job,
