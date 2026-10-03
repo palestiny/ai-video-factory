@@ -13,6 +13,7 @@ class JobEventType(str, Enum):
     RETRY_SCHEDULED = "RETRY_SCHEDULED"
     CANCELLED = "CANCELLED"
     RECOVERED = "RECOVERED"
+    RECONCILED = "RECONCILED"
 
 
 @dataclass(frozen=True)
