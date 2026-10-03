@@ -19,13 +19,18 @@ def test_repository_contracts_expose_required_operations() -> None:
     assert callable(GenerationJobRepository.add)
     assert callable(GenerationJobRepository.get)
     assert callable(GenerationAttemptRepository.add)
-    assert callable(GenerationAttemptRepository.replace)
+    assert callable(GenerationAttemptRepository.complete)
     assert callable(JobEventStore.append)
     assert callable(PersistenceTransaction.append_event)
     assert callable(PersistenceTransaction.commit)
     assert callable(PersistenceTransaction.rollback)
     assert SubmissionPersistenceTransaction is not None
     assert ExecutionPersistenceTransaction is not None
+
+
+def test_attempt_completion_is_append_only() -> None:
+    assert not hasattr(GenerationAttemptRepository, "replace")
+    assert callable(GenerationAttemptRepository.complete)
 
 
 def test_attempts_are_required_to_be_immutable_domain_records() -> None:
