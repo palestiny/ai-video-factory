@@ -18,6 +18,9 @@ class JobRepo:
     def get(self, job_id: str) -> GenerationJob | None:
         return self.job if self.job.job_id == job_id else None
 
+    def save(self, job: GenerationJob) -> None:
+        self.job = job
+
 
 class AttemptRepo:
     def __init__(self) -> None:
