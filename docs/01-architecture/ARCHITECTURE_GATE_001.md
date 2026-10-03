@@ -172,3 +172,20 @@ No database, ORM, queue, or vendor-specific storage technology is selected by th
 ### Immutable attempt persistence decision
 
 Generation attempts remain append-only at the persistence boundary. The application records the initial RUNNING attempt with `add()`, then records its terminal immutable record with `complete()`. The contract intentionally does not expose a `replace()` operation, because replacing a committed attempt would conflict with the reliability requirement that attempt history remain immutable and auditable.
+
+### Deterministic persistence verification
+
+The persistence contract is now exercised by a deterministic in-memory implementation and integration tests covering:
+
+- atomic submission persistence for job, lifecycle event, and idempotency reservation
+- rollback of submission state when commit fails
+- idempotency conflict detection
+- append-only attempt history
+- rollback restoration of attempts and events
+
+The in-memory implementation is a test double, not a production transaction engine. It intentionally does not provide database-level concurrency isolation, locking, durability, or ORM dirty-tracking semantics. Those properties remain requirements for the future infrastructure implementation.
+
+### Gate 002 dependency
+
+The next architectural boundary is Worker / Queue reliability. Queue technology remains intentionally unselected until claim/lease ownership, duplicate delivery, crash recovery, cancellation, acknowledgement, and provider-side-effect ambiguity are represented by deterministic contracts and tests.
+
