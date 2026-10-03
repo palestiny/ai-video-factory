@@ -189,3 +189,16 @@ The in-memory implementation is a test double, not a production transaction engi
 
 The next architectural boundary is Worker / Queue reliability. Queue technology remains intentionally unselected until claim/lease ownership, duplicate delivery, crash recovery, cancellation, acknowledgement, and provider-side-effect ambiguity are represented by deterministic contracts and tests.
 
+
+
+### Worker orchestration implementation progress
+
+Architecture Gate 002 semantics now have an application-level delivery boundary:
+
+`queue message → lease claim → durable state re-read → cancellation/terminal-state check → provider execution → lease validation → durable outcome → ACK`.
+
+The implementation also makes GenerationJob mutation explicit through the persistence repository `save()` contract, preventing aggregate changes from being silently lost when repositories return detached state.
+
+Provider redelivery uses the stable GenerationRequest idempotency key. Provider adapters must honor that key where supported; unsupported providers remain a reconciliation concern.
+
+Final CI verification for the latest orchestration slice is still pending.
