@@ -28,7 +28,8 @@ class GenerationAttemptRepository(Protocol):
     def add(self, attempt: GenerationAttempt) -> None:
         ...
 
-    def replace(self, attempt: GenerationAttempt) -> None:
+    def complete(self, attempt: GenerationAttempt) -> None:
+        """Append the terminal record for an existing immutable attempt."""
         ...
 
 
