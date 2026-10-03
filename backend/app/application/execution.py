@@ -29,6 +29,7 @@ class ExecuteGenerationCommand:
     inputs: dict[str, object]
     references: tuple[str, ...] = ()
     constraints: dict[str, object] | None = None
+    lease_token: str | None = None
 
 
 @dataclass(frozen=True)
@@ -98,6 +99,8 @@ class ExecuteGenerationJob:
             )
 
         completed_at = datetime.now(timezone.utc)
+        if command.lease_token is not None:
+            self._transaction.assert_lease_owner(job.job_id, command.lease_token)
         job.succeed()
         completed_attempt = GenerationAttempt.succeeded(
             attempt_id=attempt.attempt_id,
@@ -127,7 +130,11 @@ class ExecuteGenerationJob:
         failure: Failure,
     ) -> ExecuteGenerationResult:
         completed_at = datetime.now(timezone.utc)
+        # A provider failure still needs ownership validation before durable terminal state.
+        # Without it, a stale worker could overwrite a newer owner's outcome.
         job.fail(failure.code.value)
+        if attempt is not None:
+            pass
         failed_attempt = GenerationAttempt.failed(
             attempt_id=attempt.attempt_id,
             job_id=job.job_id,
