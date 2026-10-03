@@ -116,6 +116,7 @@ class ExecuteGenerationJob:
             completed_at=completed_at,
             provider_operation_id=generation.provider_operation_id,
         )
+        self._transaction.jobs.save(job)
         self._transaction.attempts.complete(completed_attempt)
         self._transaction.append_event(JobEvent(
             event_id=f"{job.job_id}:succeeded:{job.attempt_count}",
@@ -149,6 +150,7 @@ class ExecuteGenerationJob:
             failure_code=failure.code.value,
             provider_operation_id=failure.provider_operation_id,
         )
+        self._transaction.jobs.save(job)
         self._transaction.attempts.complete(failed_attempt)
         self._transaction.append_event(JobEvent(
             event_id=f"{job.job_id}:failed:{job.attempt_count}",
