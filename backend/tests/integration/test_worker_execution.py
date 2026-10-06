@@ -523,3 +523,51 @@ def test_non_reconcilable_ambiguous_outcome_becomes_reconciliation_required():
     assert jobs[job.job_id].status is GenerationStatus.FAILED
     assert attempts["job-ambiguous-terminal:attempt-1"][-1].failure_code == "RECONCILIATION_REQUIRED"
     assert events[-1].failure_code == "RECONCILIATION_REQUIRED"
+
+
+
+def test_reconciled_result_persistence_failure_requeues_without_ack():
+    from app.application.reconciliation import ProviderExecutionContract, ProviderOperationSafety
+
+    queue = InMemoryGenerationJobQueue()
+    leases = InMemoryWorkerLeaseRepository()
+    job = GenerationJob.create("job-ambiguous-persist-fail", "video", "scene-persist-fail/v1")
+    factory, jobs, _, _ = make_factory(job, leases, fail_commit=True)
+    generation = GenerationResult("ambiguous-video", "op-existing", ("asset-existing",))
+    reconciliation = FoundReconciliation(generation)
+    provider = AmbiguousProvider(
+        ProviderExecutionContract("ambiguous-video", ProviderOperationSafety.RECONCILABLE),
+        reconciliation,
+    )
+
+    message = queue.enqueue(job.job_id)
+    result = ExecuteGenerationDelivery(
+        queue, leases, factory, RecoveryResolver(provider), timedelta(minutes=1)
+    ).handle(message, "worker-a", datetime(2026, 1, 1, tzinfo=timezone.utc), {})
+
+    assert result.status is WorkerDeliveryStatus.REQUEUED
+    assert queue.is_acked(message.message_id) is False
+    assert jobs[job.job_id].status is GenerationStatus.QUEUED
+    assert len(provider.requests) == 1
+    assert reconciliation.queries[0].idempotency_key == "scene-persist-fail/v1"
+
+
+def test_non_reconcilable_persistence_failure_requeues_without_ack():
+    from app.application.reconciliation import ProviderExecutionContract, ProviderOperationSafety
+
+    queue = InMemoryGenerationJobQueue()
+    leases = InMemoryWorkerLeaseRepository()
+    job = GenerationJob.create("job-ambiguous-terminal-fail", "video", "scene-terminal-fail/v1")
+    factory, jobs, _, _ = make_factory(job, leases, fail_commit=True)
+    provider = AmbiguousProvider(
+        ProviderExecutionContract("ambiguous-video", ProviderOperationSafety.NON_RECONCILABLE)
+    )
+
+    message = queue.enqueue(job.job_id)
+    result = ExecuteGenerationDelivery(
+        queue, leases, factory, RecoveryResolver(provider), timedelta(minutes=1)
+    ).handle(message, "worker-a", datetime(2026, 1, 1, tzinfo=timezone.utc), {})
+
+    assert result.status is WorkerDeliveryStatus.REQUEUED
+    assert queue.is_acked(message.message_id) is False
+    assert jobs[job.job_id].status is GenerationStatus.QUEUED
