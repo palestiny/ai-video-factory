@@ -215,3 +215,15 @@ The worker now owns the recovery decision after an ambiguous provider outcome. T
 - NON_RECONCILABLE -> persist terminal RECONCILIATION_REQUIRED and acknowledge rather than risking a duplicate billable operation.
 
 Deterministic integration tests cover all three modes plus stable reconciliation identity.
+
+
+## Latest persistence-failure verification
+
+CI run #211 passed on commit `5e5df6d7eebf5c382fb031fe77eea14c7392333e`.
+
+The deterministic integration suite now explicitly covers persistence failure after ambiguous-provider recovery:
+
+- RECONCILABLE + reconciliation found + terminal persistence failure -> requeue without acknowledgement, preserving the stable reconciliation identity.
+- NON_RECONCILABLE + reconciliation-required persistence failure -> requeue without acknowledgement, leaving the logical job recoverable.
+
+This closes the remaining deterministic persistence-failure gap for the current provider-ambiguity worker slice. It does not prove production queue, lease-store, persistence, or provider behavior.
