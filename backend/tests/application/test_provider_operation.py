@@ -47,3 +47,69 @@ def test_cancellation_unknown_is_explicit():
     )
 
     assert result.status is ProviderCancellationStatus.UNKNOWN
+
+
+from app.infrastructure.in_memory_provider_operation import (
+    InMemoryProviderOperationRepository,
+)
+
+
+def operation() -> ProviderOperation:
+    return ProviderOperation(
+        provider="test-provider",
+        operation_id="op-123",
+        idempotency_key="job/1",
+        capability="video",
+    )
+
+
+def test_operation_survives_repository_round_trip():
+    repo = InMemoryProviderOperationRepository()
+    repo.add(operation())
+
+    loaded = repo.get("test-provider", "op-123")
+
+    assert loaded == operation()
+
+
+def test_operation_identity_is_durable_across_status_update():
+    repo = InMemoryProviderOperationRepository()
+    repo.add(operation())
+
+    updated = ProviderOperation(
+        provider="test-provider",
+        operation_id="op-123",
+        idempotency_key="job/1",
+        capability="video",
+        status=ProviderOperationStatus.RUNNING,
+    )
+    repo.save(updated)
+
+    loaded = repo.get("test-provider", "op-123")
+
+    assert loaded is not None
+    assert loaded.operation_id == "op-123"
+    assert loaded.idempotency_key == "job/1"
+    assert loaded.status is ProviderOperationStatus.RUNNING
+
+
+def test_idempotency_key_resolves_existing_operation_without_resubmission():
+    repo = InMemoryProviderOperationRepository()
+    repo.add(operation())
+
+    loaded = repo.get_by_idempotency_key("test-provider", "job/1")
+
+    assert loaded is not None
+    assert loaded.operation_id == "op-123"
+
+
+def test_duplicate_operation_identity_is_rejected():
+    repo = InMemoryProviderOperationRepository()
+    repo.add(operation())
+
+    try:
+        repo.add(operation())
+    except ValueError as exc:
+        assert "already exists" in str(exc)
+    else:
+        raise AssertionError("duplicate operation must be rejected")
