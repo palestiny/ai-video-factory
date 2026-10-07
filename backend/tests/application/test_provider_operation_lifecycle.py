@@ -7,7 +7,11 @@ from app.application.provider_operation import (
     ProviderOperationStatusResult,
 )
 from app.application.provider_operation_lifecycle import ProviderOperationLifecycle
-from app.application.reconciliation import (\n    AmbiguousProviderOutcome,\n    ProviderExecutionContract,\n    ProviderOperationSafety,\n)
+from app.application.reconciliation import (
+    AmbiguousProviderOutcome,
+    ProviderExecutionContract,
+    ProviderOperationSafety,
+)
 from app.infrastructure.in_memory_persistence import InMemoryPersistenceTransaction
 
 
