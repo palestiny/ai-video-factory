@@ -4,6 +4,11 @@ from dataclasses import dataclass, field
 from typing import Mapping, Protocol
 
 from app.domain.events import JobEvent
+from app.application.provider_operation import (
+    ProviderCancellationResult,
+    ProviderOperation,
+    ProviderOperationStatusResult,
+)
 
 
 @dataclass(frozen=True)
@@ -14,11 +19,6 @@ class GenerationRequest:
     references: tuple[str, ...] = ()
     constraints: Mapping[str, object] = field(default_factory=dict)
     idempotency_key: str = ""
-
-    # This key is stable across queue redelivery and retry. Provider adapters
-    # must forward it as their operation idempotency key when supported; when
-    # a provider cannot honor it, the adapter/infrastructure must expose an
-    # explicit reconciliation path rather than assuming duplicate execution is safe.
 
     def __post_init__(self) -> None:
         if not self.job_id.strip():
@@ -41,6 +41,19 @@ class GenerationResult:
     def __post_init__(self) -> None:
         if not self.provider.strip():
             raise ValueError("provider cannot be blank")
+
+
+class ProviderOperationPort(Protocol):
+    """Provider-neutral lifecycle for long-running external operations."""
+
+    def submit(self, request: GenerationRequest) -> ProviderOperation:
+        ...
+
+    def get_status(self, operation: ProviderOperation) -> ProviderOperationStatusResult:
+        ...
+
+    def cancel(self, operation: ProviderOperation) -> ProviderCancellationResult:
+        ...
 
 
 class VideoGenerationPort(Protocol):
