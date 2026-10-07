@@ -5,7 +5,6 @@ from typing import Protocol
 from app.application.idempotency import IdempotencyRepository
 from app.domain.events import JobEvent
 from app.domain.generation import GenerationAttempt, GenerationJob
-from app.application.provider_operation import ProviderOperation
 
 
 class GenerationJobRepository(Protocol):
@@ -45,25 +44,7 @@ class JobEventStore(Protocol):
         ...
 
 
-class ProviderOperationRepository(Protocol):
-    """Durable repository for external provider operation identity/state."""
-
-    def add(self, operation: ProviderOperation) -> None:
-        ...
-
-    def get(self, provider: str, operation_id: str) -> ProviderOperation | None:
-        ...
-
-    def save(self, operation: ProviderOperation) -> None:
-        ...
-
-    def get_by_idempotency_key(
-        self,
-        provider: str,
-        idempotency_key: str,
-    ) -> ProviderOperation | None:
-        ...
-
+from app.application.provider_operation_repository import ProviderOperationRepository
 
 class PersistenceTransaction(Protocol):
     """Atomic persistence boundary shared by application use cases.
