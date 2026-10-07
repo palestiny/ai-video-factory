@@ -212,3 +212,18 @@ This contract intentionally does not choose:
 - deployment platform
 
 Those choices belong to a later technology decision gate after adapter semantics are accepted.
+
+
+## Lifecycle clarification
+
+The production target is operation-oriented rather than assuming every provider is a single blocking request. A provider may be synchronous, but an asynchronous provider must remain representable as submit -> provider operation -> status/poll or webhook -> terminal result.
+
+The current application generate(request) -> GenerationResult port is treated as an MVP compatibility surface, not proof that all production provider lifecycles fit the boundary. Gate 003 defines the required evolution before a concrete asynchronous provider is approved.
+
+For long-running providers, provider operation identity must be durable and recoverable independently of a single worker process. Polling/webhook completion is an at-least-once delivery concern and must converge through the same operation identity and local durable state.
+
+Cancellation with an unknown external outcome must remain reconcilable; local cancellation is authoritative and a late provider result must never resurrect a cancelled logical job.
+
+## Artifact boundary clarification
+
+Provider adapters return stable artifact references. Downloading, transcoding, and object-storage persistence are separate asset/storage concerns; vendor file objects and local filesystem paths must not cross the application boundary.
