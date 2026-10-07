@@ -81,7 +81,9 @@ This gate does not choose the video/image/voice/LLM vendor, HTTP client, SDK, qu
 ## Gate result
 PASS recommendation / implementation prerequisite: operation-oriented provider lifecycle is the preferred production boundary.
 
-NOT YET APPROVED FOR CONCRETE PROVIDER IMPLEMENTATION: normalized operation contracts and deterministic tests must be added first.
+Implementation slice now added: durable operation repository state is wired into the execution persistence boundary, and an application lifecycle service covers submit -> durable persistence, status polling -> durable status, and cancellation semantics. Deterministic tests cover identity reuse, status progression, repeated polling, cancellation races, and ambiguous submission persistence.
+
+**Verification status: PENDING CI.** Concrete provider implementation remains blocked until the lifecycle contract/test slice is green.
 
 ## Next implementation slice
 1. Add provider operation lifecycle contracts.
