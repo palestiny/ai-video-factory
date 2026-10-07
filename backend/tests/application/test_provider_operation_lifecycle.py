@@ -7,7 +7,7 @@ from app.application.provider_operation import (
     ProviderOperationStatusResult,
 )
 from app.application.provider_operation_lifecycle import ProviderOperationLifecycle
-from app.application.reconciliation import ProviderExecutionContract, ProviderOperationSafety
+from app.application.reconciliation import (\n    AmbiguousProviderOutcome,\n    ProviderExecutionContract,\n    ProviderOperationSafety,\n)
 from app.infrastructure.in_memory_persistence import InMemoryPersistenceTransaction
 
 
@@ -81,6 +81,23 @@ def test_submit_persists_operation_before_returning_identity():
     assert operation.operation_id == "op-1"
     assert tx.provider_operations.get("test-provider", "op-1") == operation
     assert tx.commit_count == 1
+
+
+def test_submission_persistence_failure_surfaces_ambiguous_outcome_and_does_not_leave_local_state():
+    tx = InMemoryPersistenceTransaction()
+    tx.fail_commit = True
+    provider = FakeProvider()
+    service = lifecycle(tx, provider)
+
+    try:
+        service.submit(request())
+    except AmbiguousProviderOutcome:
+        pass
+    else:
+        raise AssertionError("submission persistence failure must remain ambiguous")
+
+    assert provider.submissions == 1
+    assert tx.provider_operations.get("test-provider", "op-1") is None
 
 
 def test_duplicate_delivery_reuses_durable_operation_without_resubmission():
