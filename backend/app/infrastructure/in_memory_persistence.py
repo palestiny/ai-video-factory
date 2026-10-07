@@ -12,6 +12,8 @@ from app.application.persistence import (
 )
 from app.domain.events import JobEvent
 from app.domain.generation import GenerationAttempt, GenerationJob
+from app.application.provider_operation import ProviderOperation
+from app.infrastructure.in_memory_provider_operation import InMemoryProviderOperationRepository
 from app.application.worker import WorkerLeaseRepository
 
 
@@ -66,16 +68,19 @@ class InMemoryPersistenceTransaction(
         self,
         jobs: dict[str, GenerationJob] | None = None,
         attempts: dict[str, list[GenerationAttempt]] | None = None,
+        provider_operations: dict[tuple[str, str], ProviderOperation] | None = None,
         events: list[JobEvent] | None = None,
         idempotency: InMemoryIdempotencyRepository | None = None,
         lease_repository: WorkerLeaseRepository | None = None,
     ) -> None:
         self._jobs = jobs if jobs is not None else {}
         self._attempts = attempts if attempts is not None else {}
+        self._provider_operations = provider_operations if provider_operations is not None else {}
         self._events = events if events is not None else []
         self._idempotency = idempotency or InMemoryIdempotencyRepository()
         self.jobs = InMemoryGenerationJobRepository(self._jobs)
         self.attempts = InMemoryGenerationAttemptRepository(self._attempts)
+        self.provider_operations = InMemoryProviderOperationRepository(self._provider_operations)
         self.idempotency = self._idempotency
         self._lease_repository = lease_repository
         self._snapshot = self._capture()
@@ -113,20 +118,23 @@ class InMemoryPersistenceTransaction(
         self._restore(self._snapshot)
         self.rollback_count += 1
 
-    def _capture(self) -> tuple[dict, dict, list, dict]:
+    def _capture(self) -> tuple[dict, dict, dict, list, dict]:
         return (
             deepcopy(self._jobs),
             deepcopy(self._attempts),
+            deepcopy(self._provider_operations),
             deepcopy(self._events),
             self._idempotency.snapshot(),
         )
 
-    def _restore(self, snapshot: tuple[dict, dict, list, dict]) -> None:
-        jobs, attempts, events, reservations = deepcopy(snapshot)
+    def _restore(self, snapshot: tuple[dict, dict, dict, list, dict]) -> None:
+        jobs, attempts, provider_operations, events, reservations = deepcopy(snapshot)
         self._jobs.clear()
         self._jobs.update(jobs)
         self._attempts.clear()
         self._attempts.update(attempts)
+        self._provider_operations.clear()
+        self._provider_operations.update(provider_operations)
         self._events.clear()
         self._events.extend(events)
         self._idempotency.restore(reservations)
