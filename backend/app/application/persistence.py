@@ -5,6 +5,7 @@ from typing import Protocol
 from app.application.idempotency import IdempotencyRepository
 from app.domain.events import JobEvent
 from app.domain.generation import GenerationAttempt, GenerationJob
+from app.application.provider_operation import ProviderOperation
 
 
 class GenerationJobRepository(Protocol):
@@ -44,6 +45,26 @@ class JobEventStore(Protocol):
         ...
 
 
+class ProviderOperationRepository(Protocol):
+    """Durable repository for external provider operation identity/state."""
+
+    def add(self, operation: ProviderOperation) -> None:
+        ...
+
+    def get(self, provider: str, operation_id: str) -> ProviderOperation | None:
+        ...
+
+    def save(self, operation: ProviderOperation) -> None:
+        ...
+
+    def get_by_idempotency_key(
+        self,
+        provider: str,
+        idempotency_key: str,
+    ) -> ProviderOperation | None:
+        ...
+
+
 class PersistenceTransaction(Protocol):
     """Atomic persistence boundary shared by application use cases.
 
@@ -69,6 +90,7 @@ class SubmissionPersistenceTransaction(PersistenceTransaction, Protocol):
 
 class ExecutionPersistenceTransaction(PersistenceTransaction, Protocol):
     attempts: GenerationAttemptRepository
+    provider_operations: ProviderOperationRepository
 
     def assert_lease_owner(self, job_id: str, lease_token: str) -> None:
         """Reject terminal persistence when the worker no longer owns the lease."""
