@@ -336,7 +336,9 @@ def test_poll_schedule_failure_requeues_without_losing_durable_operation():
         queue, leases, factory, AsyncResolver(provider), ContractResolver(),
         timedelta(minutes=1), poll_delay=timedelta(seconds=3),
     )
+    queue.fail_schedule = False
     message = queue.enqueue(job.job_id)
+    queue.fail_schedule = True
 
     result = worker.handle(message, "worker-a", NOW, {"prompt": "a shot"})
 
