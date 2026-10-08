@@ -81,9 +81,9 @@ This gate does not choose the video/image/voice/LLM vendor, HTTP client, SDK, qu
 ## Gate result
 PASS recommendation / implementation prerequisite: operation-oriented provider lifecycle is the preferred production boundary.
 
-Implementation slice now added: durable operation repository state is wired into the execution persistence boundary, and an application lifecycle service covers submit -> durable persistence, status polling -> durable status, and cancellation semantics. Deterministic tests cover identity reuse, status progression, repeated polling, cancellation races, and ambiguous submission persistence.
+Implementation slice now added: durable operation repository state is wired into the execution persistence boundary, and an application lifecycle service covers submit -> durable persistence, status polling -> durable status, and cancellation semantics. Deterministic tests cover identity reuse, status progression, repeated polling, cancellation races, ambiguous submission persistence, and the distinct uncertainty signal when polling succeeds externally but local persistence fails.
 
-**Verification status: PASS for the current lifecycle implementation slice.** GitHub Actions workflow run #246 passed on commit `775b9bf2d2481d503c68e750d7a8f386215a5e96`; the `test` job completed successfully, including the test step. This verifies the deterministic operation-lifecycle slice, not a concrete vendor adapter or production persistence/worker integration.
+**Verification status: PASS for the current lifecycle implementation slice.** GitHub Actions workflow run #252 passed on current verified commit `49b0f56f0e6aff0320265bb931108387000284bc`; the `test` job completed successfully. This includes the explicit `ProviderOperationPersistenceUncertain` signal and regression test for a provider status observed externally but not durably committed locally. This verifies the deterministic operation-lifecycle slice, not a concrete vendor adapter or production persistence/worker integration.
 
 ## Next implementation slice
 1. Integrate the operation lifecycle with worker execution without holding a lease for the provider's entire runtime.
