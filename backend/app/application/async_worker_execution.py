@@ -105,12 +105,99 @@ class ExecuteAsyncProviderDelivery:
                 # An existing RUNNING job without a durable operation is ambiguous:
                 # the provider may have accepted the previous submit before a crash.
                 if job.status is GenerationStatus.RUNNING:
-                    if contract.operation_safety is not ProviderOperationSafety.IDEMPOTENT:
-                        self._queue.release_or_requeue(message)
+                    if contract.operation_safety is ProviderOperationSafety.NON_RECONCILABLE:
+                        attempt_id = f"{job.job_id}:attempt-{job.attempt_count}"
+                        history = tx.attempts.history(attempt_id)
+                        if not history or history[-1].status is not AttemptStatus.RUNNING:
+                            raise RuntimeError("ambiguous running job has no active attempt")
+                        failure_code = "RECONCILIATION_REQUIRED"
+                        job.fail(failure_code)
+                        tx.attempts.complete(GenerationAttempt.failed(
+                            attempt_id=history[-1].attempt_id,
+                            job_id=history[-1].job_id,
+                            attempt_number=history[-1].attempt_number,
+                            provider=provider_name,
+                            started_at=history[-1].started_at,
+                            completed_at=now,
+                            failure_code=failure_code,
+                        ))
+                        tx.jobs.save(job)
+                        tx.append_event(JobEvent(
+                            event_id=f"{job.job_id}:failed:{job.attempt_count}",
+                            job_id=job.job_id,
+                            event_type=JobEventType.FAILED,
+                            occurred_at=now,
+                            attempt_number=job.attempt_count,
+                            failure_code=failure_code,
+                            metadata=(("provider", provider_name),),
+                        ))
+                        tx.commit()
+                        self._queue.ack(message)
                         return self._result(
-                            message, WorkerDeliveryStatus.REQUEUED,
-                            "running job has no durable operation; unsafe to resubmit without reconciliation",
+                            message, WorkerDeliveryStatus.ACKED,
+                            "ambiguous non-reconcilable submission recorded for manual reconciliation",
                         )
+                    if contract.operation_safety is ProviderOperationSafety.RECONCILABLE:
+                        # This delivery has no durable provider identity. Do not submit
+                        # again unless the adapter's reconciliation port explicitly
+                        # proves that no operation exists.
+                        reconciliation = getattr(provider, "reconciliation", None)
+                        if reconciliation is None:
+                            self._queue.release_or_requeue(message)
+                            return self._result(
+                                message, WorkerDeliveryStatus.REQUEUED,
+                                "reconcilable provider has no reconciliation port configured",
+                            )
+                        from app.application.reconciliation import ReconciliationQuery
+                        try:
+                            reconciled = reconciliation.reconcile(
+                                ReconciliationQuery(job.idempotency_key)
+                            )
+                        except Exception:
+                            self._queue.release_or_requeue(message)
+                            return self._result(
+                                message, WorkerDeliveryStatus.REQUEUED,
+                                "reconciliation failed; provider submission was not repeated",
+                            )
+                        if reconciled is not None:
+                            if not isinstance(reconciled, GenerationResult):
+                                raise ValueError("reconciliation returned an invalid generation result")
+                            attempt_id = f"{job.job_id}:attempt-{job.attempt_count}"
+                            history = tx.attempts.history(attempt_id)
+                            if not history or history[-1].status is not AttemptStatus.RUNNING:
+                                raise RuntimeError("reconciled job has no active attempt")
+                            job.succeed()
+                            tx.attempts.complete(GenerationAttempt.succeeded(
+                                attempt_id=history[-1].attempt_id,
+                                job_id=history[-1].job_id,
+                                attempt_number=history[-1].attempt_number,
+                                provider=reconciled.provider,
+                                started_at=history[-1].started_at,
+                                completed_at=now,
+                                provider_operation_id=reconciled.provider_operation_id,
+                            ))
+                            tx.jobs.save(job)
+                            tx.append_event(JobEvent(
+                                event_id=f"{job.job_id}:reconciled:{job.attempt_count}",
+                                job_id=job.job_id,
+                                event_type=JobEventType.RECONCILED,
+                                occurred_at=now,
+                                attempt_number=job.attempt_count,
+                                metadata=(("provider", provider_name),),
+                            ))
+                            tx.append_event(JobEvent(
+                                event_id=f"{job.job_id}:succeeded:{job.attempt_count}",
+                                job_id=job.job_id,
+                                event_type=JobEventType.SUCCEEDED,
+                                occurred_at=now,
+                                attempt_number=job.attempt_count,
+                            ))
+                            tx.commit()
+                            self._queue.ack(message)
+                            return self._result(
+                                message, WorkerDeliveryStatus.ACKED,
+                                "existing provider result reconciled without resubmission",
+                            )
                     attempt_number = job.attempt_count
                     history = tx.attempts.history(f"{job.job_id}:attempt-{attempt_number}")
                     if not history:
