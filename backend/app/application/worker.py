@@ -40,6 +40,15 @@ class GenerationJobQueue(Protocol):
     def enqueue_after(self, job_id: str, delay: timedelta) -> QueueMessage:
         ...
 
+    def claim_next(
+        self,
+        worker_id: str,
+        now: datetime,
+        lease_duration: timedelta,
+    ) -> QueueMessage | None:
+        """Claim one due message; expired claims may be reclaimed with a new token."""
+        ...
+
     def ack(self, message: QueueMessage) -> None:
         ...
 
