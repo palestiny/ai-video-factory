@@ -32,6 +32,9 @@ class ProviderOperation:
     terminal_result: object | None = None
     failure_code: str | None = None
     diagnostics: Mapping[str, object] = field(default_factory=dict)
+    # Generation of the next durable poll intent. It must be advanced in the
+    # same transaction that inserts that intent; this field alone is not a queue.
+    poll_generation: int = 0
 
     def __post_init__(self) -> None:
         if not self.provider.strip():
@@ -42,6 +45,8 @@ class ProviderOperation:
             raise ValueError("idempotency_key cannot be blank")
         if not self.capability.strip():
             raise ValueError("capability cannot be blank")
+        if self.poll_generation < 0:
+            raise ValueError("poll_generation cannot be negative")
 
 
 @dataclass(frozen=True)
