@@ -47,6 +47,24 @@ Integration tests cover:
 5. Make polling and webhook notifications converge on the same operation identity and terminal transition path.
 6. Define polling limits, backoff, timeout, and dead-letter/manual-reconciliation policy.
 
+## Transaction/outbox assessment — proposal, not yet selected
+
+### Current evidence and failure window
+
+The application persists provider-operation state before it schedules the next poll, and only acknowledges the current queue delivery after scheduling succeeds. This is safe against a simple scheduling exception when the broker reliably redelivers unacknowledged messages. It is not an atomic database/queue commit: if scheduling succeeds but ACK fails, duplicate poll messages are possible; correctness therefore still depends on idempotent delivery handling and lease/concurrency controls.
+
+### Options
+
+1. **Direct enqueue + ACK ordering (current deterministic slice).** Smallest design; depends on at-least-once broker redelivery, idempotent handlers, and lease protection. Does not eliminate duplicate scheduling after the enqueue/ACK crash window.
+2. **Transactional outbox (recommended for production).** In the same database transaction that persists a non-terminal provider operation, insert a uniquely keyed poll-dispatch intent. A dispatcher publishes pending intents and marks them delivered only after broker confirmation. Use a uniqueness key such as `(job_id, provider_operation_id, next_poll_generation)` so retries do not create unbounded duplicate intents. Delivery remains at-least-once, so consumers must still be idempotent.
+3. **Database-backed queue.** Store scheduled poll work in the same transactional datastore and let workers claim due rows. This can remove the cross-system publish gap, but couples queue throughput/retention/locking to the database and requires careful claim/lease indexing.
+
+### Recommendation
+
+Prefer **transactional outbox** if production uses a separate broker and relational database. Keep the outbox record in the same transaction as the durable operation state; dispatch asynchronously; tolerate duplicate delivery; and add metrics/alerts for oldest pending outbox age and repeated dispatch failures. If the chosen infrastructure provides a proven database-backed queue with suitable delayed scheduling and throughput, compare that option before committing.
+
+This is a recommendation only. Database, broker, outbox schema, retry policy, and delivery guarantees remain unselected until the concrete persistence/queue stack is chosen. The in-memory tests do not prove this production property.
+
 ## Decisions
 
 - Keep the existing synchronous delivery service intact; async operations use a distinct worker application service.
