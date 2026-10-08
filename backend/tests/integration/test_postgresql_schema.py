@@ -146,3 +146,33 @@ def test_non_claimed_work_cannot_retain_stale_lease_metadata():
                 )
                 """
             )
+
+
+
+def test_provider_operation_schema_has_nonnegative_poll_generation():
+    database_url = os.environ["DATABASE_URL"]
+
+    with psycopg.connect(database_url, autocommit=True) as connection:
+        _apply_migration(connection)
+        column = connection.execute(
+            """
+            SELECT column_default, is_nullable
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = 'provider_operations'
+              AND column_name = 'poll_generation'
+            """
+        ).fetchone()
+
+        assert column is not None
+        assert column[0] is not None and "0" in column[0]
+        assert column[1] == "NO"
+
+        with pytest.raises(psycopg.errors.CheckViolation):
+            connection.execute(
+                """
+                INSERT INTO provider_operations
+                    (provider, idempotency_key, operation_id, capability, poll_generation)
+                VALUES ('schema-provider', 'schema-key', 'schema-op', 'video', -1)
+                """
+            )
