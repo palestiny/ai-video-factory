@@ -114,3 +114,35 @@ def test_claimed_work_requires_a_lease_token_and_expiry():
                 )
                 """
             )
+
+
+def test_non_claimed_work_cannot_retain_stale_lease_metadata():
+    """ACK/requeue transitions must clear lease ownership rather than leave stale tokens."""
+    database_url = os.environ["DATABASE_URL"]
+
+    with psycopg.connect(database_url, autocommit=True) as connection:
+        _apply_migration(connection)
+        connection.execute(
+            """
+            INSERT INTO generation_jobs
+                (job_id, capability, idempotency_key, status)
+            VALUES ('schema-stale-lease-job', 'video', 'schema-stale-lease-key', 'RUNNING')
+            ON CONFLICT (job_id) DO NOTHING
+            """
+        )
+
+        with pytest.raises(psycopg.errors.CheckViolation):
+            connection.execute(
+                """
+                INSERT INTO generation_work_items
+                    (message_id, job_id, intent_key, due_at, state, claim_token)
+                VALUES (
+                    '00000000-0000-0000-0000-000000000004',
+                    'schema-stale-lease-job',
+                    'provider-op-stale-lease:poll:1',
+                    now(),
+                    'PENDING',
+                    '00000000-0000-0000-0000-000000000005'
+                )
+                """
+            )
