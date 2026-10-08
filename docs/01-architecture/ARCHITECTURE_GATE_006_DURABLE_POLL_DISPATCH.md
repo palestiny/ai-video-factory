@@ -44,7 +44,7 @@ The initial schema is not proof of the above semantics. The adapter must define 
 
 - The async worker calls `ProviderOperationLifecycle.poll(operation)`, and that lifecycle method saves the observed operation and commits its transaction internally.
 - The worker then calls `enqueue_after(job_id, poll_delay)` only after that commit. This confirms the crash window is real in the current call graph, not merely a theoretical queue concern.
-- `ProviderOperation` currently has no persisted poll-generation/version field. The worker queue message also carries no intent key or generation.
+- `ProviderOperation` now defines a persisted `poll_generation` field (default `0`, non-negative, with a PostgreSQL column/check constraint). This is contract groundwork only: lifecycle code does not yet advance it atomically with work-intent insertion, and queue messages still carry no intent key or generation.
 - The execution transaction port exposes provider-operation persistence but no work-intent repository. Therefore an adapter-only queue change cannot satisfy atomicity: the application transaction boundary and poll lifecycle must be extended together.
 - The migration now enforces a unique nonblank `intent_key` and requires complete lease metadata for `CLAIMED` rows while requiring lease fields to be cleared for non-claimed states.
 - PostgreSQL CI run #323 passed after these schema constraints and tests were added. This verifies the migration and schema constraint tests only; it does not prove a queue adapter, transaction atomicity, concurrency, fencing, or crash recovery.
@@ -83,7 +83,7 @@ The initial schema is not proof of the above semantics. The adapter must define 
 - The current `GenerationJobQueue` port exposes `enqueue_after(job_id, delay)` and does not carry a stable intent key or poll generation.
 - The current async worker performs scheduling separately from persistence commit.
 - The current `ProviderOperationLifecycle.poll` commits operation state internally; atomic poll-intent insertion requires refactoring this transaction boundary or introducing an explicit transaction-scoped operation.
-- There is no durable poll-generation value in the provider-operation model yet. Do not infer generation from status transitions; multiple polls can observe the same status. The generation's increment/locking semantics must be explicit and covered by concurrency tests.
+- The durable poll-generation field now exists in the model/schema, but its increment/locking semantics are not implemented. Do not infer generation from status transitions; multiple polls can observe the same status. Generation advancement must be atomic with insertion of the corresponding intent and covered by concurrency tests.
 - The PostgreSQL migration exists, but no production PostgreSQL repository/transaction adapter or queue implementation is established yet.
 - The migration smoke test verifies schema application and selected constraints only; it does not prove atomicity, concurrency, fencing, or crash recovery.
 - Webhook-triggered immediate checks must eventually use the same durable intent contract rather than a separate scheduling path.
