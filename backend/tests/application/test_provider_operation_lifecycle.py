@@ -6,7 +6,10 @@ from app.application.provider_operation import (
     ProviderOperationStatus,
     ProviderOperationStatusResult,
 )
-from app.application.provider_operation_lifecycle import ProviderOperationLifecycle
+from app.application.provider_operation_lifecycle import (
+    ProviderOperationLifecycle,
+    ProviderOperationPersistenceUncertain,
+)
 from app.application.reconciliation import (
     AmbiguousProviderOutcome,
     ProviderExecutionContract,
@@ -189,3 +192,24 @@ def test_cancel_skips_external_call_for_already_terminal_operation():
 
     assert result.status is ProviderCancellationStatus.ALREADY_TERMINAL
     assert provider.cancellations == 0
+
+
+
+def test_poll_persistence_failure_uses_recoverable_uncertainty_signal():
+    tx = InMemoryPersistenceTransaction()
+    provider = FakeProvider()
+    service = lifecycle(tx, provider)
+    operation = service.submit(request())
+    provider.status = ProviderOperationStatus.RUNNING
+    tx.fail_commit = True
+
+    try:
+        service.poll(operation)
+    except ProviderOperationPersistenceUncertain:
+        pass
+    else:
+        raise AssertionError("poll persistence failure must remain explicitly uncertain")
+
+    stored = tx.provider_operations.get("test-provider", operation.operation_id)
+    assert stored is not None
+    assert stored.status is ProviderOperationStatus.SUBMITTED
