@@ -83,13 +83,18 @@ class PostgresGenerationJobQueue(GenerationJobQueue):
                     END
                 FROM candidate
                 WHERE item.message_id = candidate.message_id
-                RETURNING item.message_id, item.job_id, item.delivery_attempt,\n                          item.intent_key, item.intent_kind, item.provider,\n                          item.operation_id, item.generation
+                RETURNING item.message_id, item.job_id, item.delivery_attempt,
+                          item.intent_key, item.intent_kind, item.provider,
+                          item.operation_id, item.generation
                 """,
                 (now, now, token, worker_id, now, lease_duration),
             ).fetchone()
         if row is None:
             return None
-        return QueueMessage(\n            str(row[0]), row[1], row[2], str(token),\n            row[3], row[4], row[5], row[6], row[7],\n        )
+        return QueueMessage(
+            str(row[0]), row[1], row[2], str(token),
+            row[3], row[4], row[5], row[6], row[7],
+        )
 
     def ack(self, message: QueueMessage) -> None:
         token = self._required_token(message)
