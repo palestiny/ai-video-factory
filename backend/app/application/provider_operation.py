@@ -29,6 +29,9 @@ class ProviderOperation:
     capability: str
     status: ProviderOperationStatus = ProviderOperationStatus.SUBMITTED
     submitted_at: str | None = None
+    terminal_result: object | None = None
+    failure_code: str | None = None
+    diagnostics: Mapping[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.provider.strip():
