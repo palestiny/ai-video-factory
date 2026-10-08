@@ -55,6 +55,7 @@ class AttemptStatus(str, Enum):
     RUNNING = "RUNNING"
     SUCCEEDED = "SUCCEEDED"
     FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
 
 
 @dataclass(frozen=True)
@@ -144,6 +145,28 @@ class GenerationAttempt:
             status=AttemptStatus.FAILED,
             provider_operation_id=provider_operation_id,
             failure_code=failure_code,
+        )
+
+    @classmethod
+    def cancelled(
+        cls,
+        attempt_id: str,
+        job_id: str,
+        attempt_number: int,
+        provider: str,
+        started_at: datetime,
+        completed_at: datetime,
+        provider_operation_id: str | None = None,
+    ) -> "GenerationAttempt":
+        return cls(
+            attempt_id=attempt_id,
+            job_id=job_id,
+            attempt_number=attempt_number,
+            provider=provider,
+            started_at=started_at,
+            completed_at=completed_at,
+            status=AttemptStatus.CANCELLED,
+            provider_operation_id=provider_operation_id,
         )
 
 
