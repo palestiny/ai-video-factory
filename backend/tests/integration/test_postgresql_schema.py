@@ -172,7 +172,7 @@ def test_provider_operation_schema_has_nonnegative_poll_generation():
             connection.execute(
                 """
                 INSERT INTO provider_operations
-                    (provider, idempotency_key, operation_id, capability, poll_generation)
-                VALUES ('schema-provider', 'schema-key', 'schema-op', 'video', -1)
+                    (provider, idempotency_key, operation_id, capability, status, poll_generation)
+                VALUES ('schema-provider', 'schema-key', 'schema-op', 'video', 'RUNNING', -1)
                 """
             )
