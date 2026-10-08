@@ -10,11 +10,13 @@ from app.application.persistence import (
     GenerationJobRepository,
     SubmissionPersistenceTransaction,
 )
+from app.application.provider_operation import ProviderOperation
+from app.application.worker import WorkerLeaseRepository
 from app.domain.events import JobEvent
 from app.domain.generation import GenerationAttempt, GenerationJob
-from app.application.provider_operation import ProviderOperation
 from app.infrastructure.in_memory_provider_operation import InMemoryProviderOperationRepository
-from app.application.worker import WorkerLeaseRepository
+from app.infrastructure.in_memory_work_intent import InMemoryWorkIntentRepository
+from app.application.work_intent import WorkIntent
 
 
 class InMemoryGenerationJobRepository(GenerationJobRepository):
@@ -57,12 +59,7 @@ class InMemoryPersistenceTransaction(
     SubmissionPersistenceTransaction,
     ExecutionPersistenceTransaction,
 ):
-    """Deterministic transaction test double.
-
-    It snapshots durable state at construction. Commit publishes staged state;
-    rollback restores the snapshot. It deliberately models the application
-    transaction contract without selecting a database or ORM.
-    """
+    """Deterministic transaction test double with rollback across all repositories."""
 
     def __init__(
         self,
@@ -72,15 +69,18 @@ class InMemoryPersistenceTransaction(
         events: list[JobEvent] | None = None,
         idempotency: InMemoryIdempotencyRepository | None = None,
         lease_repository: WorkerLeaseRepository | None = None,
+        work_intents: dict[str, WorkIntent] | None = None,
     ) -> None:
         self._jobs = jobs if jobs is not None else {}
         self._attempts = attempts if attempts is not None else {}
         self._provider_operations = provider_operations if provider_operations is not None else {}
         self._events = events if events is not None else []
+        self._work_intents = work_intents if work_intents is not None else {}
         self._idempotency = idempotency or InMemoryIdempotencyRepository()
         self.jobs = InMemoryGenerationJobRepository(self._jobs)
         self.attempts = InMemoryGenerationAttemptRepository(self._attempts)
         self.provider_operations = InMemoryProviderOperationRepository(self._provider_operations)
+        self.work_intents = InMemoryWorkIntentRepository(self._work_intents)
         self.idempotency = self._idempotency
         self._lease_repository = lease_repository
         self._snapshot = self._capture()
@@ -118,17 +118,18 @@ class InMemoryPersistenceTransaction(
         self._restore(self._snapshot)
         self.rollback_count += 1
 
-    def _capture(self) -> tuple[dict, dict, dict, list, dict]:
+    def _capture(self) -> tuple[dict, dict, dict, list, dict, dict]:
         return (
             deepcopy(self._jobs),
             deepcopy(self._attempts),
             deepcopy(self._provider_operations),
             deepcopy(self._events),
+            deepcopy(self._work_intents),
             self._idempotency.snapshot(),
         )
 
-    def _restore(self, snapshot: tuple[dict, dict, dict, list, dict]) -> None:
-        jobs, attempts, provider_operations, events, reservations = deepcopy(snapshot)
+    def _restore(self, snapshot: tuple[dict, dict, dict, list, dict, dict]) -> None:
+        jobs, attempts, provider_operations, events, work_intents, reservations = deepcopy(snapshot)
         self._jobs.clear()
         self._jobs.update(jobs)
         self._attempts.clear()
@@ -137,4 +138,6 @@ class InMemoryPersistenceTransaction(
         self._provider_operations.update(provider_operations)
         self._events.clear()
         self._events.extend(events)
+        self._work_intents.clear()
+        self._work_intents.update(work_intents)
         self._idempotency.restore(reservations)
