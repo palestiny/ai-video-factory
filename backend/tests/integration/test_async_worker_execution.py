@@ -202,3 +202,147 @@ def test_ambiguous_non_reconcilable_submission_is_terminalized_not_requeued_fore
     assert attempts[f"{job.job_id}:attempt-1"][-1].failure_code == "RECONCILIATION_REQUIRED"
     assert provider.submissions == 0
     assert queue.is_acked(message.message_id)
+
+
+
+def _build_ambiguous_reconcilable(*, reconciliation_result=None, reconciliation_error=None):
+    from app.application.reconciliation import ReconciliationQuery
+    from app.domain.generation import GenerationAttempt
+
+    queue = InMemoryGenerationJobQueue()
+    leases = InMemoryWorkerLeaseRepository()
+    job = GenerationJob.create("async-reconcile", "video", "async-reconcile/v1")
+    job.start()
+    jobs = {job.job_id: job}
+    attempts = {
+        f"{job.job_id}:attempt-1": [
+            GenerationAttempt.started(
+                f"{job.job_id}:attempt-1", job.job_id, 1, "async-fake", NOW
+            )
+        ]
+    }
+    events = []
+    operations = {}
+
+    def factory():
+        return InMemoryPersistenceTransaction(
+            jobs=jobs, attempts=attempts, provider_operations=operations,
+            events=events, lease_repository=leases,
+        )
+
+    provider = AsyncFakeProvider()
+
+    class ReconciliationPort:
+        def __init__(self):
+            self.queries = []
+
+        def reconcile(self, query: ReconciliationQuery):
+            self.queries.append(query)
+            if reconciliation_error is not None:
+                raise reconciliation_error
+            return reconciliation_result
+
+    provider.reconciliation = ReconciliationPort()
+
+    class ReconcilableContract:
+        def resolve_contract(self, provider_name):
+            return ProviderExecutionContract(
+                provider_name, ProviderOperationSafety.RECONCILABLE
+            )
+
+    worker = ExecuteAsyncProviderDelivery(
+        queue, leases, factory, AsyncResolver(provider), ReconcilableContract(),
+        timedelta(minutes=1),
+    )
+    message = queue.enqueue(job.job_id)
+    return queue, leases, job, jobs, attempts, events, provider, worker, message
+
+
+def test_reconcilable_ambiguity_found_result_completes_without_resubmission():
+    reconciled = GenerationResult("async-fake", "existing-op", ("asset://recovered.mp4",))
+    queue, leases, job, jobs, attempts, events, provider, worker, message = (
+        _build_ambiguous_reconcilable(reconciliation_result=reconciled)
+    )
+
+    result = worker.handle(message, "worker-a", NOW, {})
+
+    assert result.status is WorkerDeliveryStatus.ACKED
+    assert jobs[job.job_id].status is GenerationStatus.SUCCEEDED
+    assert provider.submissions == 0
+    assert provider.polls == 0
+    assert attempts[f"{job.job_id}:attempt-1"][-1].provider_operation_id == "existing-op"
+    assert [event.event_type.value for event in events][-2:] == ["RECONCILED", "SUCCEEDED"]
+    assert queue.is_acked(message.message_id)
+
+
+def test_reconcilable_ambiguity_not_found_allows_safe_submit():
+    queue, leases, job, jobs, attempts, events, provider, worker, message = (
+        _build_ambiguous_reconcilable(reconciliation_result=None)
+    )
+
+    result = worker.handle(message, "worker-a", NOW, {"prompt": "retry only after not-found"})
+
+    assert result.status is WorkerDeliveryStatus.ACKED
+    assert provider.reconciliation.queries[0].idempotency_key == job.idempotency_key
+    assert provider.submissions == 1
+    assert jobs[job.job_id].status is GenerationStatus.RUNNING
+    assert queue.is_acked(message.message_id)
+    assert len(queue.pending()) == 1
+
+
+def test_reconcilable_ambiguity_lookup_error_requeues_without_submission():
+    queue, leases, job, jobs, attempts, events, provider, worker, message = (
+        _build_ambiguous_reconcilable(reconciliation_error=RuntimeError("lookup unavailable"))
+    )
+
+    result = worker.handle(message, "worker-a", NOW, {})
+
+    assert result.status is WorkerDeliveryStatus.REQUEUED
+    assert provider.reconciliation.queries[0].idempotency_key == job.idempotency_key
+    assert provider.submissions == 0
+    assert jobs[job.job_id].status is GenerationStatus.RUNNING
+    assert not queue.is_acked(message.message_id)
+    assert len(queue.pending()) >= 2
+
+
+def test_poll_schedule_failure_requeues_without_losing_durable_operation():
+    class FailingScheduleQueue(InMemoryGenerationJobQueue):
+        def __init__(self):
+            super().__init__()
+            self.fail_schedule = True
+
+        def enqueue_after(self, job_id, delay):
+            if self.fail_schedule:
+                self.fail_schedule = False
+                raise RuntimeError("queue temporarily unavailable")
+            return super().enqueue_after(job_id, delay)
+
+    queue = FailingScheduleQueue()
+    leases = InMemoryWorkerLeaseRepository()
+    job = GenerationJob.create("async-schedule-fail", "video", "async-schedule-fail/v1")
+    jobs = {job.job_id: job}
+    attempts = {}
+    events = []
+    operations = {}
+
+    def factory():
+        return InMemoryPersistenceTransaction(
+            jobs=jobs, attempts=attempts, provider_operations=operations,
+            events=events, lease_repository=leases,
+        )
+
+    provider = AsyncFakeProvider()
+    worker = ExecuteAsyncProviderDelivery(
+        queue, leases, factory, AsyncResolver(provider), ContractResolver(),
+        timedelta(minutes=1), poll_delay=timedelta(seconds=3),
+    )
+    message = queue.enqueue(job.job_id)
+
+    result = worker.handle(message, "worker-a", NOW, {"prompt": "a shot"})
+
+    assert result.status is WorkerDeliveryStatus.REQUEUED
+    assert not queue.is_acked(message.message_id)
+    assert provider.submissions == 1
+    assert len(operations) == 1
+    assert jobs[job.job_id].status is GenerationStatus.RUNNING
+    assert leases.current(job.job_id) is None
