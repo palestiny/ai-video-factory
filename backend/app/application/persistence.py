@@ -36,6 +36,10 @@ class GenerationAttemptRepository(Protocol):
         """Append the terminal record for an existing immutable attempt."""
         ...
 
+    def history(self, attempt_id: str) -> tuple[GenerationAttempt, ...]:
+        """Return immutable versions of one logical attempt in commit order."""
+        ...
+
 
 class JobEventStore(Protocol):
     """Append-only persistence boundary for job lifecycle events."""
