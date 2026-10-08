@@ -81,12 +81,13 @@ The initial schema is not proof of the above semantics. The adapter must define 
 
 ## Remaining gaps
 
-- The current `GenerationJobQueue` port exposes `enqueue_after(job_id, delay)` and does not carry a stable intent key or poll generation.
+- The current `GenerationJobQueue` port still exposes `enqueue_after(job_id, delay)` and does not carry a stable intent key or poll generation, although queue delivery now includes an optional fencing token.
 - The current async worker performs scheduling separately from persistence commit.
 - The current `ProviderOperationLifecycle.poll` commits operation state internally; atomic poll-intent insertion requires refactoring this transaction boundary or introducing an explicit transaction-scoped operation.
 - The durable poll-generation field exists in the model/schema, but its increment/locking semantics are not implemented. Do not infer generation from status transitions; multiple polls can observe the same status. Generation advancement must be atomic with insertion of the corresponding intent and covered by concurrency tests.
 - The work-intent contract and in-memory repository are now present, but they are not yet wired into poll lifecycle execution.
-- A transaction-scoped `PostgresWorkIntentRepository` has now been added. It uses the caller-owned psycopg connection, inserts queue rows without committing, and verifies duplicate stable keys against stored intent contents. Its focused PostgreSQL integration tests are awaiting the latest CI result. This is a repository adapter only: the complete PostgreSQL transaction factory, provider-operation adapter, and durable queue claim/ACK implementation are not established yet.
+- A transaction-scoped `PostgresWorkIntentRepository` has been added. It uses the caller-owned psycopg connection, inserts queue rows without committing, and verifies duplicate stable keys against stored intent contents. Its focused PostgreSQL integration tests passed in CI run #362.
+- `PostgresGenerationJobQueue` has been added with atomic due-work claiming via `FOR UPDATE SKIP LOCKED`, expiring claim tokens, re-claim attempt increments, and token-fenced ACK/release. `QueueMessage` now carries an optional claim token. Focused real-PostgreSQL tests cover normal claim/ACK, expired-claim recovery, stale-ACK rejection, and delayed work; the newest CI result is pending. This queue adapter is still not wired into a production composition root, and its enqueue methods intentionally do not replace transaction-scoped work-intent insertion.
 - The migration smoke test verifies schema application and selected constraints only; it does not prove atomicity, concurrency, fencing, or crash recovery.
 - Webhook-triggered immediate checks must eventually use the same durable intent contract rather than a separate scheduling path.
 
