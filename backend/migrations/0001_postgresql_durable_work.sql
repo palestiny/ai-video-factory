@@ -90,8 +90,16 @@ CREATE TABLE IF NOT EXISTS generation_work_items (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     acked_at TIMESTAMPTZ,
     CHECK (
-        (state = 'CLAIMED' AND claim_token IS NOT NULL AND claimed_until IS NOT NULL)
-        OR state <> 'CLAIMED'
+        (state = 'CLAIMED'
+            AND claim_token IS NOT NULL
+            AND claimed_by IS NOT NULL
+            AND length(trim(claimed_by)) > 0
+            AND claimed_until IS NOT NULL)
+        OR
+        (state <> 'CLAIMED'
+            AND claim_token IS NULL
+            AND claimed_by IS NULL
+            AND claimed_until IS NULL)
     )
 );
 
