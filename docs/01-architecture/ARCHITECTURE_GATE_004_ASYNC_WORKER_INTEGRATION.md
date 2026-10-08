@@ -25,7 +25,9 @@ The lease covers one submit/poll/finalize delivery only. A non-terminal operatio
 
 ## Verified
 
-CI run #272 passed on code/test commit `fe77696694d0e0c64cb2c913f449ef44f5594934`. CI run #278 passed on code/test commit `2341d721664dd00ba2e4e0d932be87eb2b27697b`.
+- CI run #272 passed on code/test commit `fe77696694d0e0c64cb2c913f449ef44f5594934`.
+- CI run #278 passed on code/test commit `2341d721664dd00ba2e4e0d932be87eb2b27697b`.
+- CI run #289 passed on cancellation test commit `4c4134573b54f322d7ee24abb5ebc9c0c95f2eef` (GitHub Actions: [Backend Tests](https://github.com/palestiny/ai-video-factory/actions/runs/37852174052)).
 
 Integration tests cover:
 - non-terminal poll persists state, schedules a later delivery, acknowledges current delivery, and releases the lease;
@@ -44,7 +46,7 @@ Integration tests cover:
 2. Define production outbox/transaction strategy so a durable non-terminal operation cannot be stranded if scheduling fails.
 3. Add provider-specific contract tests for submit/status identity, terminal result normalization, and operation-safety guarantees.
 4. Verify the persistence implementation's transaction isolation, optimistic concurrency, and atomic lookup of operation/attempt history. The current implementation is validated against in-memory test doubles only.
-5. Make polling and webhook notifications converge on the same operation identity and terminal transition path.
+5. Make polling and webhook notifications converge on the same operation identity and terminal transition path. Design proposal now lives in [Architecture Gate 005](ARCHITECTURE_GATE_005_WEBHOOK_POLL_CONVERGENCE.md).
 6. Define polling limits, backoff, timeout, and dead-letter/manual-reconciliation policy.
 
 ## Transaction/outbox assessment — proposal, not yet selected
@@ -79,4 +81,4 @@ This is a recommendation only. Database, broker, outbox schema, retry policy, an
 
 ## Next
 
-Review production transaction/outbox semantics, then verify webhook/poll convergence before selecting a concrete provider.
+Review Gate 005's webhook/poll convergence proposal, then define the production transaction/outbox contract before selecting a concrete provider or infrastructure stack.
