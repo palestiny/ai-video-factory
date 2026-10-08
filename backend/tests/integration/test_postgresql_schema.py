@@ -176,3 +176,101 @@ def test_provider_operation_schema_has_nonnegative_poll_generation():
                 VALUES ('schema-provider', 'schema-key', 'schema-op', 'video', 'RUNNING', -1)
                 """
             )
+
+
+def test_provider_poll_work_item_requires_complete_positive_identity():
+    database_url = os.environ["DATABASE_URL"]
+
+    with psycopg.connect(database_url, autocommit=True) as connection:
+        _apply_migration(connection)
+        connection.execute(
+            """
+            INSERT INTO generation_jobs
+                (job_id, capability, idempotency_key, status)
+            VALUES ('schema-poll-intent-job', 'video', 'schema-poll-intent-key', 'RUNNING')
+            ON CONFLICT (job_id) DO NOTHING
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO generation_work_items
+                (message_id, job_id, intent_key, intent_kind, provider, operation_id, generation, due_at)
+            VALUES (
+                '00000000-0000-0000-0000-000000000011',
+                'schema-poll-intent-job',
+                'provider-poll:10:provider-a:11:operation-9:1',
+                'PROVIDER_POLL',
+                'provider-a',
+                'operation-9',
+                1,
+                now()
+            )
+            """
+        )
+
+        with pytest.raises(psycopg.errors.CheckViolation):
+            connection.execute(
+                """
+                INSERT INTO generation_work_items
+                    (message_id, job_id, intent_key, intent_kind, provider, operation_id, generation, due_at)
+                VALUES (
+                    '00000000-0000-0000-0000-000000000012',
+                    'schema-poll-intent-job',
+                    'invalid-provider-poll',
+                    'PROVIDER_POLL',
+                    'provider-a',
+                    'operation-9',
+                    0,
+                    now()
+                )
+                """
+            )
+
+
+def test_provider_poll_generation_is_unique_even_with_different_intent_keys():
+    database_url = os.environ["DATABASE_URL"]
+
+    with psycopg.connect(database_url, autocommit=True) as connection:
+        _apply_migration(connection)
+        connection.execute(
+            """
+            INSERT INTO generation_jobs
+                (job_id, capability, idempotency_key, status)
+            VALUES ('schema-poll-unique-job', 'video', 'schema-poll-unique-key', 'RUNNING')
+            ON CONFLICT (job_id) DO NOTHING
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO generation_work_items
+                (message_id, job_id, intent_key, intent_kind, provider, operation_id, generation, due_at)
+            VALUES (
+                '00000000-0000-0000-0000-000000000021',
+                'schema-poll-unique-job',
+                'poll-intent-first-key',
+                'PROVIDER_POLL',
+                'provider-a',
+                'operation-unique',
+                1,
+                now()
+            )
+            """
+        )
+
+        with pytest.raises(psycopg.errors.UniqueViolation):
+            connection.execute(
+                """
+                INSERT INTO generation_work_items
+                    (message_id, job_id, intent_key, intent_kind, provider, operation_id, generation, due_at)
+                VALUES (
+                    '00000000-0000-0000-0000-000000000022',
+                    'schema-poll-unique-job',
+                    'poll-intent-second-key',
+                    'PROVIDER_POLL',
+                    'provider-a',
+                    'operation-unique',
+                    1,
+                    now()
+                )
+                """
+            )
