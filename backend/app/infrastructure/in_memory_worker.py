@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from uuid import uuid4
+from uuid import uuid4, uuid5, NAMESPACE_URL
+
+from app.application.work_intent import WorkIntent
 
 from app.application.worker import QueueMessage, WorkerLease
 
@@ -16,9 +18,11 @@ class QueuedMessage:
 class InMemoryGenerationJobQueue:
     """Deterministic queue double; delivery is intentionally at-least-once."""
 
-    def __init__(self) -> None:
+    def __init__(self, work_intents: dict[str, WorkIntent] | None = None) -> None:
         self._messages: dict[str, QueuedMessage] = {}
         self._acked: set[str] = set()
+        self._work_intents = work_intents
+        self._intent_messages: dict[str, str] = {}
 
     def enqueue(self, job_id: str) -> QueueMessage:
         return self.enqueue_after(job_id, timedelta(0))
@@ -42,16 +46,41 @@ class InMemoryGenerationJobQueue:
             message_id=str(uuid4()),
             job_id=message.job_id,
             delivery_attempt=message.delivery_attempt + 1,
+            intent_key=message.intent_key,
+            intent_kind=message.intent_kind,
+            provider=message.provider,
+            operation_id=message.operation_id,
+            generation=message.generation,
         )
         self._messages[redelivery.message_id] = QueuedMessage(
             redelivery,
             datetime.now().astimezone(),
         )
 
+    def _sync_work_intents(self) -> None:
+        if self._work_intents is None:
+            return
+        for intent_key, intent in self._work_intents.items():
+            if intent_key in self._intent_messages:
+                continue
+            message_id = str(uuid5(NAMESPACE_URL, intent_key))
+            message = QueueMessage(
+                message_id=message_id,
+                job_id=intent.job_id,
+                intent_key=intent.intent_key,
+                intent_kind=intent.kind,
+                provider=intent.provider,
+                operation_id=intent.operation_id,
+                generation=intent.generation,
+            )
+            self._messages[message_id] = QueuedMessage(message, intent.due_at)
+            self._intent_messages[intent_key] = message_id
+
     def is_acked(self, message_id: str) -> bool:
         return message_id in self._acked
 
     def pending(self) -> tuple[QueueMessage, ...]:
+        self._sync_work_intents()
         return tuple(
             item.message
             for item in self._messages.values()
