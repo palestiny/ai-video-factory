@@ -69,7 +69,8 @@ class ContractResolver:
 
 
 def build(*, fail_finalize_once: bool = False):
-    queue = InMemoryGenerationJobQueue()
+    work_intents = {}
+    queue = InMemoryGenerationJobQueue(work_intents)
     leases = InMemoryWorkerLeaseRepository()
     job = GenerationJob.create("async-job", "video", "async-job/v1")
     jobs = {job.job_id: job}
@@ -87,6 +88,7 @@ def build(*, fail_finalize_once: bool = False):
             provider_operations=operation_store,
             events=events,
             lease_repository=leases,
+            work_intents=work_intents,
         )
         # The first delivery uses one transaction for start/submit/poll. Its
         # second transaction is terminal job finalization.
@@ -208,7 +210,8 @@ def test_ambiguous_non_reconcilable_submission_is_terminalized_not_requeued_fore
     from app.application.worker_execution import WorkerDeliveryStatus
     from app.domain.generation import GenerationAttempt
 
-    queue = InMemoryGenerationJobQueue()
+    work_intents = {}
+    queue = InMemoryGenerationJobQueue(work_intents)
     leases = InMemoryWorkerLeaseRepository()
     job = GenerationJob.create("async-ambiguous", "video", "async-ambiguous/v1")
     job.start()
@@ -226,7 +229,7 @@ def test_ambiguous_non_reconcilable_submission_is_terminalized_not_requeued_fore
     def factory():
         return InMemoryPersistenceTransaction(
             jobs=jobs, attempts=attempts, provider_operations=operations,
-            events=events, lease_repository=leases,
+            events=events, lease_repository=leases, work_intents=work_intents,
         )
 
     provider = AsyncFakeProvider()
@@ -258,7 +261,8 @@ def _build_ambiguous_reconcilable(*, reconciliation_result=None, reconciliation_
     from app.application.reconciliation import ReconciliationQuery
     from app.domain.generation import GenerationAttempt
 
-    queue = InMemoryGenerationJobQueue()
+    work_intents = {}
+    queue = InMemoryGenerationJobQueue(work_intents)
     leases = InMemoryWorkerLeaseRepository()
     job = GenerationJob.create("async-reconcile", "video", "async-reconcile/v1")
     job.start()
@@ -276,7 +280,7 @@ def _build_ambiguous_reconcilable(*, reconciliation_result=None, reconciliation_
     def factory():
         return InMemoryPersistenceTransaction(
             jobs=jobs, attempts=attempts, provider_operations=operations,
-            events=events, lease_repository=leases,
+            events=events, lease_repository=leases, work_intents=work_intents,
         )
 
     provider = AsyncFakeProvider()
@@ -354,10 +358,10 @@ def test_reconcilable_ambiguity_lookup_error_requeues_without_submission():
     assert len(queue.pending()) >= 2
 
 
-def test_poll_schedule_failure_requeues_without_losing_durable_operation():
+def test_poll_intent_is_durable_without_a_separate_queue_enqueue():
     class FailingScheduleQueue(InMemoryGenerationJobQueue):
-        def __init__(self):
-            super().__init__()
+        def __init__(self, work_intents=None):
+            super().__init__(work_intents)
             self.fail_schedule = True
 
         def enqueue_after(self, job_id, delay):
@@ -366,7 +370,8 @@ def test_poll_schedule_failure_requeues_without_losing_durable_operation():
                 raise RuntimeError("queue temporarily unavailable")
             return super().enqueue_after(job_id, delay)
 
-    queue = FailingScheduleQueue()
+    work_intents = {}
+    queue = FailingScheduleQueue(work_intents)
     leases = InMemoryWorkerLeaseRepository()
     job = GenerationJob.create("async-schedule-fail", "video", "async-schedule-fail/v1")
     jobs = {job.job_id: job}
@@ -377,7 +382,7 @@ def test_poll_schedule_failure_requeues_without_losing_durable_operation():
     def factory():
         return InMemoryPersistenceTransaction(
             jobs=jobs, attempts=attempts, provider_operations=operations,
-            events=events, lease_repository=leases,
+            events=events, lease_repository=leases, work_intents=work_intents,
         )
 
     provider = AsyncFakeProvider()
@@ -391,9 +396,13 @@ def test_poll_schedule_failure_requeues_without_losing_durable_operation():
 
     result = worker.handle(message, "worker-a", NOW, {"prompt": "a shot"})
 
-    assert result.status is WorkerDeliveryStatus.REQUEUED
-    assert not queue.is_acked(message.message_id)
+    assert result.status is WorkerDeliveryStatus.ACKED
+    assert queue.is_acked(message.message_id)
     assert provider.submissions == 1
     assert len(operations) == 1
     assert jobs[job.job_id].status is GenerationStatus.RUNNING
     assert leases.current(job.job_id) is None
+    pending = queue.pending()
+    assert len(pending) == 1
+    assert pending[0].intent_kind == "PROVIDER_POLL"
+    assert pending[0].generation == 1
