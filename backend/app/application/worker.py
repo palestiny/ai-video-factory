@@ -10,6 +10,7 @@ class QueueMessage:
     message_id: str
     job_id: str
     delivery_attempt: int = 1
+    claim_token: str | None = None
 
     def __post_init__(self) -> None:
         if not self.message_id.strip():
