@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from datetime import datetime
 
 from app.application.persistence import ExecutionPersistenceTransaction
 from app.application.ports import GenerationRequest, GenerationResult, ProviderOperationPort
@@ -12,6 +13,7 @@ from app.application.provider_operation import (
     ProviderOperationStatusResult,
 )
 from app.application.reconciliation import AmbiguousProviderOutcome, ProviderExecutionContract
+from app.application.work_intent import WorkIntent
 
 
 class ProviderOperationPersistenceUncertain(RuntimeError):
@@ -76,7 +78,14 @@ class ProviderOperationLifecycle:
             ) from exc
         return operation
 
-    def poll(self, operation: ProviderOperation) -> ProviderOperationStatusResult:
+    def poll(
+        self,
+        operation: ProviderOperation,
+        *,
+        next_poll_due_at: datetime | None = None,
+        expected_poll_generation: int | None = None,
+        job_id: str | None = None,
+    ) -> ProviderOperationStatusResult:
         current = self._transaction.provider_operations.get(
             operation.provider,
             operation.operation_id,
@@ -84,6 +93,20 @@ class ProviderOperationLifecycle:
         if current is None:
             raise KeyError(
                 f"provider operation not found: {(operation.provider, operation.operation_id)}"
+            )
+
+        if (
+            expected_poll_generation is not None
+            and current.poll_generation != expected_poll_generation
+        ):
+            # Redelivery of an older job-execution or poll message must not
+            # perform another provider call or advance the schedule again.
+            return ProviderOperationStatusResult(
+                operation=current,
+                status=current.status,
+                result=current.terminal_result,
+                failure_code=current.failure_code,
+                diagnostics=current.diagnostics,
             )
 
         if current.status in {
@@ -107,25 +130,27 @@ class ProviderOperationLifecycle:
             raise
 
         self._validate_status(status, current)
+        is_terminal = status.status in {
+            ProviderOperationStatus.SUCCEEDED,
+            ProviderOperationStatus.FAILED,
+            ProviderOperationStatus.CANCELLED,
+        }
+        next_generation = current.poll_generation
+        if not is_terminal and next_poll_due_at is not None:
+            next_generation += 1
+
         updated = replace(
             current,
             status=status.status,
+            poll_generation=next_generation,
             terminal_result=(
                 status.result
-                if status.status in {
-                    ProviderOperationStatus.SUCCEEDED,
-                    ProviderOperationStatus.FAILED,
-                    ProviderOperationStatus.CANCELLED,
-                }
+                if is_terminal
                 else current.terminal_result
             ),
             failure_code=(
                 status.failure_code
-                if status.status in {
-                    ProviderOperationStatus.SUCCEEDED,
-                    ProviderOperationStatus.FAILED,
-                    ProviderOperationStatus.CANCELLED,
-                }
+                if is_terminal
                 else current.failure_code
             ),
             diagnostics=status.diagnostics,
@@ -133,6 +158,18 @@ class ProviderOperationLifecycle:
 
         try:
             self._transaction.provider_operations.save(updated)
+            if not is_terminal and next_poll_due_at is not None:
+                if not job_id or not job_id.strip():
+                    raise ValueError("job_id is required when scheduling a provider poll")
+                self._transaction.work_intents.add_if_absent(
+                    WorkIntent.provider_poll(
+                        job_id=job_id,
+                        provider=current.provider,
+                        operation_id=current.operation_id,
+                        generation=next_generation,
+                        due_at=next_poll_due_at,
+                    )
+                )
             self._transaction.commit()
         except Exception as exc:
             self._transaction.rollback()
