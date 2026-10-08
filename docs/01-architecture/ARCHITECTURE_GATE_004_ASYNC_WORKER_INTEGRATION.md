@@ -25,23 +25,25 @@ The lease covers one submit/poll/finalize delivery only. A non-terminal operatio
 
 ## Verified
 
-CI run #272 passed on head commit `fe77696694d0e0c64cb2c913f449ef44f5594934`.
+CI run #272 passed on code/test commit `fe77696694d0e0c64cb2c913f449ef44f5594934`. CI run #278 passed on code/test commit `2341d721664dd00ba2e4e0d932be87eb2b27697b`.
 
 Integration tests cover:
 - non-terminal poll persists state, schedules a later delivery, acknowledges current delivery, and releases the lease;
 - terminal success completes the job and attempt on a later delivery;
 - job-finalization commit failure followed by redelivery completes from the durable terminal operation without another provider submission or poll;
-- ambiguous non-reconcilable submission is terminalized as `RECONCILIATION_REQUIRED`.
+- ambiguous non-reconcilable submission is terminalized as `RECONCILIATION_REQUIRED`;
+- reconcilable ambiguity found-result completes without resubmission;
+- explicit reconciliation not-found permits a submission attempt, while lookup failure requeues without resubmission;
+- queue scheduling failure requeues the delivery without losing the durable provider operation.
 
 ## Remaining gaps — do not mark production-ready
 
-1. Add explicit tests for reconcilable ambiguity: found, not found, and lookup failure.
-2. Add cancellation-race tests, including cancellation after provider success is observed but before job finalization.
-3. Add queue scheduling failure tests and define production outbox/transaction strategy so a durable non-terminal operation cannot be stranded if scheduling fails.
-4. Add provider-specific contract tests for submit/status identity, terminal result normalization, and operation-safety guarantees.
-5. Verify the persistence implementation's transaction isolation, optimistic concurrency, and atomic lookup of operation/attempt history. The current implementation is validated against in-memory test doubles only.
-6. Make polling and webhook notifications converge on the same operation identity and terminal transition path.
-7. Define polling limits, backoff, timeout, and dead-letter/manual-reconciliation policy.
+1. Add cancellation-race tests, including cancellation after provider success is observed but before job finalization; define how the active attempt is terminalized when its job is cancelled.
+2. Define production outbox/transaction strategy so a durable non-terminal operation cannot be stranded if scheduling fails.
+3. Add provider-specific contract tests for submit/status identity, terminal result normalization, and operation-safety guarantees.
+4. Verify the persistence implementation's transaction isolation, optimistic concurrency, and atomic lookup of operation/attempt history. The current implementation is validated against in-memory test doubles only.
+5. Make polling and webhook notifications converge on the same operation identity and terminal transition path.
+6. Define polling limits, backoff, timeout, and dead-letter/manual-reconciliation policy.
 
 ## Decisions
 
@@ -51,4 +53,4 @@ Integration tests cover:
 
 ## Next
 
-Test reconcilable ambiguity, cancellation races, and scheduling failure; then review production transaction/outbox semantics before selecting a concrete provider.
+Resolve cancellation/attempt lifecycle semantics, then review production transaction/outbox semantics before selecting a concrete provider.
