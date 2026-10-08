@@ -113,3 +113,28 @@ def test_duplicate_operation_identity_is_rejected():
         assert "already exists" in str(exc)
     else:
         raise AssertionError("duplicate operation must be rejected")
+
+
+
+def test_poll_generation_defaults_to_zero_and_rejects_negative_values():
+    from dataclasses import replace
+
+    current = operation()
+    assert current.poll_generation == 0
+
+    try:
+        replace(current, poll_generation=-1)
+    except ValueError as exc:
+        assert "poll_generation" in str(exc)
+    else:
+        raise AssertionError("negative poll generation must be rejected")
+
+
+def test_poll_generation_survives_repository_round_trip():
+    from dataclasses import replace
+
+    repo = InMemoryProviderOperationRepository()
+    current = replace(operation(), poll_generation=7)
+    repo.add(current)
+
+    assert repo.get("test-provider", "op-123") == current
