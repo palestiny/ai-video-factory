@@ -34,11 +34,13 @@ Integration tests cover:
 - ambiguous non-reconcilable submission is terminalized as `RECONCILIATION_REQUIRED`;
 - reconcilable ambiguity found-result completes without resubmission;
 - explicit reconciliation not-found permits a submission attempt, while lookup failure requeues without resubmission;
-- queue scheduling failure requeues the delivery without losing the durable provider operation.
+- queue scheduling failure requeues the delivery without losing the durable provider operation;
+- cancellation after provider success is observed does not resurrect the job and terminalizes the active attempt;
+- cancellation between deliveries terminalizes the active attempt without another provider poll.
 
 ## Remaining gaps — do not mark production-ready
 
-1. The deterministic cancellation-race path now terminalizes a still-running attempt as `CANCELLED` if the job was cancelled after provider status observation. Add cancellation endpoint/use-case integration tests and verify transaction isolation against the production adapter.
+1. Deterministic tests now cover cancellation both during provider polling and between queue deliveries. The worker terminalizes a still-running attempt as `CANCELLED` and retains the provider operation ID when available. Add cancellation endpoint/use-case integration tests and verify transaction isolation against the production adapter.
 2. Define production outbox/transaction strategy so a durable non-terminal operation cannot be stranded if scheduling fails.
 3. Add provider-specific contract tests for submit/status identity, terminal result normalization, and operation-safety guarantees.
 4. Verify the persistence implementation's transaction isolation, optimistic concurrency, and atomic lookup of operation/attempt history. The current implementation is validated against in-memory test doubles only.
@@ -54,7 +56,7 @@ Integration tests cover:
 ## Decision — cancellation and attempt lifecycle
 
 - Job cancellation remains authoritative: a late provider success never changes a cancelled job back to success.
-- Added `AttemptStatus.CANCELLED` and a cancellation factory for the attempt record. When a late result is observed after job cancellation, the worker terminalizes the active attempt and retains the provider operation ID for audit/reconciliation.
+- Added `AttemptStatus.CANCELLED` and a cancellation factory for the attempt record. Both a late provider result and a redelivery that finds an already-cancelled job terminalize the active attempt and retain the provider operation ID when available.
 - The worker does not append a second job-level `CANCELLED` event in this branch; the cancellation command owns that event. If attempt terminalization cannot commit, the delivery is requeued for retry.
 
 ## Next
