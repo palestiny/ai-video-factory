@@ -283,7 +283,17 @@ class ExecuteAsyncProviderDelivery:
 
             if operation.status not in self._TERMINAL:
                 try:
-                    observed = lifecycle.poll(operation)
+                    expected_generation = (
+                        message.generation
+                        if message.intent_kind == "PROVIDER_POLL"
+                        else 0
+                    )
+                    observed = lifecycle.poll(
+                        operation,
+                        next_poll_due_at=now + self._poll_delay,
+                        expected_poll_generation=expected_generation,
+                        job_id=job.job_id,
+                    )
                 except ProviderOperationPersistenceUncertain:
                     self._queue.release_or_requeue(message)
                     return self._result(
@@ -291,9 +301,9 @@ class ExecuteAsyncProviderDelivery:
                         "provider status observed but durable status is uncertain",
                     )
                 if observed.status not in self._TERMINAL:
-                    # Schedule before ACK. If scheduling fails, the current message
-                    # remains eligible for redelivery and the durable operation is reused.
-                    self._queue.enqueue_after(job.job_id, self._poll_delay)
+                    # The lifecycle committed the next poll intent in the same
+                    # transaction as the provider-operation observation. ACK only
+                    # after that atomic commit has returned successfully.
                     self._queue.ack(message)
                     return self._result(
                         message, WorkerDeliveryStatus.ACKED,
