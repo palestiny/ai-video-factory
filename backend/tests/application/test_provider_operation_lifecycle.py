@@ -213,3 +213,48 @@ def test_poll_persistence_failure_uses_recoverable_uncertainty_signal():
     stored = tx.provider_operations.get("test-provider", operation.operation_id)
     assert stored is not None
     assert stored.status is ProviderOperationStatus.SUBMITTED
+
+
+
+def test_terminal_result_survives_replay_without_polling_or_status_regression():
+    tx = InMemoryPersistenceTransaction()
+    provider = FakeProvider()
+    service = lifecycle(tx, provider)
+    operation = service.submit(request())
+    provider.status = ProviderOperationStatus.SUCCEEDED
+
+    first = service.poll(operation)
+    provider.status = ProviderOperationStatus.RUNNING
+    replayed = lifecycle(tx, provider).poll(operation)
+
+    assert first.status is ProviderOperationStatus.SUCCEEDED
+    assert replayed.status is ProviderOperationStatus.SUCCEEDED
+    assert replayed.result == first.result
+    assert provider.polls == 1
+
+    stored = tx.provider_operations.get("test-provider", operation.operation_id)
+    assert stored is not None
+    assert stored.status is ProviderOperationStatus.SUCCEEDED
+    assert stored.terminal_result == first.result
+
+
+def test_terminal_failure_code_survives_replay():
+    tx = InMemoryPersistenceTransaction()
+    provider = FakeProvider()
+    service = lifecycle(tx, provider)
+    operation = service.submit(request())
+    provider.status = ProviderOperationStatus.FAILED
+
+    provider.get_status = lambda current: ProviderOperationStatusResult(
+        operation=current,
+        status=ProviderOperationStatus.FAILED,
+        failure_code="PROVIDER_FAILURE",
+        diagnostics={"source": "provider"},
+    )
+    first = service.poll(operation)
+    replayed = lifecycle(tx, provider).poll(operation)
+
+    assert replayed.status is ProviderOperationStatus.FAILED
+    assert replayed.failure_code == "PROVIDER_FAILURE"
+    assert replayed.diagnostics == {"source": "provider"}
+    assert replayed.failure_code == first.failure_code
