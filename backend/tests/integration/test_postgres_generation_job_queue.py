@@ -5,7 +5,9 @@ from pathlib import Path
 import psycopg
 import pytest
 
+from app.application.work_intent import WorkIntent
 from app.infrastructure.postgres_generation_job_queue import PostgresGenerationJobQueue
+from app.infrastructure.postgres_work_intent import PostgresWorkIntentRepository
 
 
 MIGRATION = Path(__file__).parents[2] / "migrations" / "0001_postgresql_durable_work.sql"
