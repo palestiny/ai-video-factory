@@ -21,8 +21,15 @@ def test_provider_poll_intent_key_is_stable_for_logical_generation():
     first = poll_intent()
     replay = poll_intent()
 
-    assert first.intent_key == "provider-poll:provider-a:operation-9:1"
+    assert first.intent_key == "provider-poll:10:provider-a:11:operation-9:1"
     assert first == replay
+
+
+def test_provider_poll_intent_key_is_unambiguous_when_ids_contain_separators():
+    first = WorkIntent.provider_poll_key("provider:a", "operation", 1)
+    second = WorkIntent.provider_poll_key("provider", "a:operation", 1)
+
+    assert first != second
 
 
 def test_work_intent_repository_is_idempotent_for_same_intent():
