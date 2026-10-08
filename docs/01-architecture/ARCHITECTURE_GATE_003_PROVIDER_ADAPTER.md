@@ -83,11 +83,12 @@ PASS recommendation / implementation prerequisite: operation-oriented provider l
 
 Implementation slice now added: durable operation repository state is wired into the execution persistence boundary, and an application lifecycle service covers submit -> durable persistence, status polling -> durable status, and cancellation semantics. Deterministic tests cover identity reuse, status progression, repeated polling, cancellation races, and ambiguous submission persistence.
 
-**Verification status: PENDING CI.** Concrete provider implementation remains blocked until the lifecycle contract/test slice is green.
+**Verification status: PASS for the current lifecycle implementation slice.** GitHub Actions workflow run #246 passed on commit `775b9bf2d2481d503c68e750d7a8f386215a5e96`; the `test` job completed successfully, including the test step. This verifies the deterministic operation-lifecycle slice, not a concrete vendor adapter or production persistence/worker integration.
 
 ## Next implementation slice
-1. Add provider operation lifecycle contracts.
-2. Add deterministic contract tests for synchronous and asynchronous provider behavior.
-3. Define polling/webhook convergence and durable operation state.
-4. Re-run Gate 003.
-5. Only then evaluate concrete provider capabilities, cost, latency, quality, and API constraints.
+1. Integrate the operation lifecycle with worker execution without holding a lease for the provider's entire runtime.
+2. Define and test normalized terminal outcomes (success/failure/cancelled/unknown), including result/artifact/usage/cost normalization.
+3. Make polling and optional webhook notifications converge through the same durable operation identity and transition rules.
+4. Add restart/recovery and persistence-failure tests at the worker boundary; keep unknown external outcomes reconcilable.
+5. Re-run Gate 003 against the integrated worker path.
+6. Only then evaluate concrete provider capabilities, cost, latency, quality, rate limits, and API constraints.
