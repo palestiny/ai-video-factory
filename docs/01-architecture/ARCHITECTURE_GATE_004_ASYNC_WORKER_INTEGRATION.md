@@ -38,7 +38,7 @@ Integration tests cover:
 
 ## Remaining gaps — do not mark production-ready
 
-1. Add cancellation-race tests, including cancellation after provider success is observed but before job finalization; define how the active attempt is terminalized when its job is cancelled.
+1. The deterministic cancellation-race path now terminalizes a still-running attempt as `CANCELLED` if the job was cancelled after provider status observation. Add cancellation endpoint/use-case integration tests and verify transaction isolation against the production adapter.
 2. Define production outbox/transaction strategy so a durable non-terminal operation cannot be stranded if scheduling fails.
 3. Add provider-specific contract tests for submit/status identity, terminal result normalization, and operation-safety guarantees.
 4. Verify the persistence implementation's transaction isolation, optimistic concurrency, and atomic lookup of operation/attempt history. The current implementation is validated against in-memory test doubles only.
@@ -51,6 +51,12 @@ Integration tests cover:
 - Keep provider and infrastructure vendor choices deferred.
 - Do not claim production readiness until the remaining gaps are covered by tests and a real persistence/queue adapter.
 
+## Decision — cancellation and attempt lifecycle
+
+- Job cancellation remains authoritative: a late provider success never changes a cancelled job back to success.
+- Added `AttemptStatus.CANCELLED` and a cancellation factory for the attempt record. When a late result is observed after job cancellation, the worker terminalizes the active attempt and retains the provider operation ID for audit/reconciliation.
+- The worker does not append a second job-level `CANCELLED` event in this branch; the cancellation command owns that event. If attempt terminalization cannot commit, the delivery is requeued for retry.
+
 ## Next
 
-Resolve cancellation/attempt lifecycle semantics, then review production transaction/outbox semantics before selecting a concrete provider.
+Review production transaction/outbox semantics, then verify webhook/poll convergence before selecting a concrete provider.
