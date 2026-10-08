@@ -88,9 +88,43 @@ class ExecuteAsyncProviderDelivery:
             if job is None:
                 self._queue.ack(message)
                 return self._result(message, WorkerDeliveryStatus.ACKED, "job no longer exists")
-            if job.status in {GenerationStatus.CANCELLED, GenerationStatus.SUCCEEDED}:
+            if job.status is GenerationStatus.CANCELLED:
+                # Cancellation may have committed between queue deliveries, so
+                # close any active attempt before acknowledging the stale message.
+                attempt_id = f"{job.job_id}:attempt-{job.attempt_count}"
+                history = tx.attempts.history(attempt_id)
+                if history and history[-1].status is AttemptStatus.RUNNING:
+                    active = history[-1]
+                    operation = tx.provider_operations.get_by_idempotency_key(
+                        active.provider, job.idempotency_key
+                    )
+                    tx.attempts.complete(GenerationAttempt.cancelled(
+                        attempt_id=active.attempt_id,
+                        job_id=active.job_id,
+                        attempt_number=active.attempt_number,
+                        provider=active.provider,
+                        started_at=active.started_at,
+                        completed_at=now,
+                        provider_operation_id=(
+                            operation.operation_id if operation is not None else None
+                        ),
+                    ))
+                    try:
+                        tx.commit()
+                    except Exception:
+                        tx.rollback()
+                        self._queue.release_or_requeue(message)
+                        return self._result(
+                            message, WorkerDeliveryStatus.REQUEUED,
+                            "cancelled job attempt finalization failed; delivery will retry",
+                        )
                 self._queue.ack(message)
-                return self._result(message, WorkerDeliveryStatus.ACKED, f"job already terminal: {job.status.value}")
+                return self._result(
+                    message, WorkerDeliveryStatus.ACKED, "job already terminal: CANCELLED"
+                )
+            if job.status is GenerationStatus.SUCCEEDED:
+                self._queue.ack(message)
+                return self._result(message, WorkerDeliveryStatus.ACKED, "job already terminal: SUCCEEDED")
 
             provider = self._providers.resolve(job.capability)
             provider_name = provider.provider_name
