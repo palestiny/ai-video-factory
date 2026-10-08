@@ -1,107 +1,82 @@
-# Architecture Gate 006 — Durable Poll Dispatch and Outbox Contract
+# Architecture Gate 006 — Durable Poll Dispatch and Scheduling Contract
 
-**Status: DESIGN PROPOSAL — no production persistence or queue implementation selected.**
+**Status: DESIGN CONTRACT RETAINED — implementation must follow approved Gate 007.**
+
+Gate 007 selected PostgreSQL plus a PostgreSQL-backed delayed work queue on 2026-10-09. That decision resolves Gate 006's open technology choice for the MVP; it does **not** mean this gate has passed. The existing worker still schedules through the application queue port after the provider-operation transaction, so the atomic state-plus-intent invariant is not yet implemented.
+
+Decision record: [Architecture Gate 007 — Persistence and Durable Scheduling Decision](ARCHITECTURE_GATE_007_PERSISTENCE_AND_SCHEDULING_DECISION.md).
 
 ## Goal
 
 Specify the correctness contract for scheduling future provider-status checks so that a durable non-terminal operation cannot be stranded between a database commit and queue publication.
 
-This gate defines required behavior, not a database schema or broker choice.
-
 ## Failure window being closed
 
-With direct enqueue followed by acknowledgement, a worker can:
-- persist the provider operation as non-terminal;
-- publish a future poll message;
-- crash before acknowledging the current delivery.
-
-This can create duplicate messages. More dangerously, a future refactor that acknowledges before durable scheduling could lose the poll entirely. The production design must tolerate duplicates and make accepted scheduling intent durable before acknowledging the source delivery.
+The current async worker persists provider-operation state and then calls `enqueue_after(job_id, delay)`. A crash between these operations can strand a non-terminal operation. A crash after scheduling but before acknowledging the source delivery can also create duplicate messages. The production design must durably record the next work intent in the same database transaction as the state transition that requires it, then tolerate at-least-once delivery.
 
 ## Required invariants
 
-1. **Atomic intent creation.** When a status observation requires another poll, durable operation state and the next poll intent are committed in one local database transaction.
-2. **Stable intent identity.** A logical poll generation has one stable key, proposed as `(provider_name, provider_operation_id, poll_generation)`. Repeated handling must not create unbounded new intents for the same generation.
-3. **At-least-once dispatch.** The dispatcher may publish the same intent more than once if broker confirmation and local marking are separated by a crash. Consumers must remain idempotent.
-4. **No premature acknowledgement.** The worker may acknowledge its source delivery only after the operation observation and required next-poll intent are durably committed.
-5. **Terminal suppression.** A terminal provider operation must not create new poll generations. Previously queued poll messages for terminal/cancelled jobs must safely no-op or reconcile durable state.
+1. **Atomic intent creation.** When a status observation requires another poll, durable operation state and the next poll intent are committed in one local PostgreSQL transaction.
+2. **Stable intent identity.** A logical poll generation has one stable key derived from `(provider_name, provider_operation_id, poll_generation)`. Repeated handling must not create unbounded new intents for the same generation.
+3. **At-least-once delivery.** Duplicate delivery is expected and consumers remain idempotent.
+4. **No premature acknowledgement.** The worker acknowledges its source delivery only after the operation observation and any required next-poll intent are durably committed.
+5. **Terminal suppression.** A terminal provider operation must not create new poll generations. Previously queued messages for terminal/cancelled jobs safely no-op or reconcile durable state.
 6. **Stale generation protection.** A delayed message from poll generation N must not supersede a newer accepted observation or create generation N+1 more than once.
-7. **Concurrency protection.** Concurrent workers must not commit duplicate logical poll generations. Enforce this with a unique constraint and transactional/optimistic conflict handling in the production adapter.
-8. **Bounded retry policy.** Dispatch failures retry with bounded backoff and observable attempt counts; persistent failures become alertable and operationally recoverable rather than silently abandoned.
-9. **No provider call in dispatcher.** The outbox dispatcher publishes delivery intent only. It does not poll providers, finalize jobs, or own provider lifecycle rules.
-10. **Cancellation safety.** Cancellation does not require erasing already-published messages. Workers re-read durable job/operation state and must not resurrect a cancelled job.
+7. **Concurrency protection.** Concurrent workers cannot commit duplicate logical poll generations. Enforce this with a unique constraint and transactional conflict handling.
+8. **Bounded retry policy.** Dispatch failures retry with bounded backoff and observable attempt counts; persistent failures become alertable and recoverable.
+9. **No provider call in queue claiming.** Queue claiming/dispatch only returns due work. Provider polling and lifecycle transitions remain application-worker responsibilities.
+10. **Cancellation safety.** Cancellation does not require deleting already-published messages. Workers re-read durable state and must not resurrect a cancelled job.
+11. **Lease fencing.** Claims have expiring leases and fresh tokens; stale owners cannot ACK or mutate the current claim.
+12. **Timezone semantics.** Due times are timezone-aware UTC instants at the application boundary and stored as PostgreSQL `TIMESTAMPTZ`.
 
-## Proposed logical records (illustrative only)
+## Approved MVP implementation shape
 
-### PollDispatchIntent
+- PostgreSQL is the source of truth for job state and scheduled work.
+- Insert a work item in the same transaction as the state change that requires it.
+- Claim due items atomically using `FOR UPDATE SKIP LOCKED` or an equivalently tested strategy.
+- Use the existing `generation_work_items` schema as an initial baseline, subject to migration and adapter tests.
+- Keep the queue behind an application port; do not introduce a separate broker for the MVP.
+- A work item's stable `intent_key` represents one logical intent, not one delivery attempt. Redelivery increments delivery metadata without changing that identity.
 
-- stable intent ID / unique key;
-- provider name and provider operation ID;
-- logical job ID;
-- poll generation;
-- not-before timestamp;
-- creation timestamp;
-- dispatch status (pending / delivered, with failure represented by attempt metadata rather than a fake terminal success);
-- dispatch attempt count;
-- last dispatch error code and timestamp, with sensitive data excluded.
+The initial schema is not proof of the above semantics. The adapter must define and test the exact ownership/ACK protocol and must not acknowledge stale claim tokens.
 
-### Dispatcher lease/claim
-
-A dispatcher claims due pending intents using an atomic claim/lease mechanism. Lease expiry allows recovery after a dispatcher crash. The implementation must avoid two dispatchers permanently owning the same intent and must define behavior when broker publish succeeds but the dispatcher crashes before marking the intent delivered.
-
-These names and fields are a proposal, not a committed schema.
-
-## Proposed flow
+## Required flow
 
 1. Worker reads current durable job and provider operation.
-2. Provider status is normalized and persisted.
-3. If status is non-terminal and polling is still permitted, the same transaction inserts or reuses the next unique poll intent with its not-before time.
-4. Transaction commits.
-5. Worker acknowledges the source queue delivery.
-6. Dispatcher claims due intent and publishes a message carrying the stable intent/operation identity.
-7. After broker confirmation, dispatcher marks the intent delivered.
-8. If dispatcher crashes after publish and before marking delivered, it republishes after lease expiry; duplicate message is expected and harmless.
-9. Consumer claims the job lease, reads durable state, and treats the message as a hint. It checks generation/state before calling the provider.
-10. Terminal status prevents creation of another poll intent.
+2. Provider status is normalized.
+3. In one database transaction, persist the observation and, if non-terminal and polling is permitted, insert or reuse the unique next-poll intent with its due time.
+4. Commit the transaction.
+5. Acknowledge the source delivery only after the commit succeeds.
+6. Claim due work atomically with a lease token and expiry; competing claimers cannot own the same active claim.
+7. ACK/release validates the current token. Expired claims become recoverable.
+8. If the process crashes after commit but before ACK, redelivery is safe because the logical intent key is stable and unique.
+9. A consumer treats the message as a hint, re-reads durable state, and checks terminal/cancellation/generation state before polling.
 
-## Retry and operational behavior
+## Required tests against real PostgreSQL
 
-- Provider-status errors and queue-dispatch errors are different failure classes with separate counters and policies.
-- A transient broker error retains the intent as pending and schedules retry.
-- Repeated dispatch failure raises an alert based on oldest pending age and retry count.
-- A dead-letter/quarantine state must preserve the intent and failure metadata for operator replay; it must not silently delete the only recovery path.
-- Poll timeout/max-attempt policy belongs to the provider-operation lifecycle policy, not the dispatcher.
-- Intent retention and cleanup must preserve audit/recovery requirements.
+1. Operation-state commit and intent creation are atomic.
+2. Rollback leaves neither a partially advanced operation nor a poll intent.
+3. Duplicate insertion for the same poll generation resolves to one logical intent.
+4. Concurrent workers cannot create two intents for the same generation.
+5. Two claimers cannot own the same active due item.
+6. Publish/ACK or worker crash windows recover through redelivery without losing the intent.
+7. A failed ACK/release with a stale token is rejected.
+8. An expired claim can be reclaimed with a new token; the old token cannot ACK it.
+9. A terminal operation cannot create another poll intent.
+10. A stale poll-generation message cannot regress operation state.
+11. A cancelled job remains cancelled when stale work arrives.
+12. Retry exhaustion remains observable and preserves recoverable intent metadata.
+13. Restart recovery handles pending work and expired claims.
+14. Queue age, delivery attempts, and retry/dead-letter state are observable.
 
-## Required tests
+## Remaining gaps
 
-1. operation-state commit and intent creation are atomic;
-2. rollback leaves neither a partially advanced operation nor a poll intent;
-3. duplicate insertion for the same poll generation resolves to one logical intent;
-4. concurrent workers cannot create two intents for the same generation;
-5. publish succeeds then dispatcher crashes before mark-delivered; redelivery duplicates safely;
-6. publish fails; intent remains pending and retries;
-7. dispatcher lease expires after crash and another dispatcher recovers the intent;
-8. terminal operation cannot create another poll intent;
-9. stale poll-generation message cannot regress operation state;
-10. cancelled job remains cancelled when stale poll message arrives;
-11. retry exhaustion is observable and preserves recoverable intent metadata;
-12. tests run against the real selected database/queue adapters, not only in-memory fakes.
-
-## Options still open
-
-- Transactional outbox in the relational database;
-- database-backed delayed queue;
-- a managed workflow/queue product with documented durable scheduling guarantees.
-
-Choose only after comparing transaction support, delayed delivery, operational burden, throughput, cost, local-development fit, and portability. Do not choose a vendor merely because this contract uses the word “outbox.”
+- The current `GenerationJobQueue` port exposes `enqueue_after(job_id, delay)` and does not carry a stable intent key or poll generation.
+- The current async worker performs scheduling separately from persistence commit.
+- The PostgreSQL migration exists, but no production PostgreSQL repository/transaction adapter or queue implementation is established yet.
+- The migration smoke test verifies schema application only; it does not prove atomicity, concurrency, fencing, or crash recovery.
+- Webhook-triggered immediate checks must eventually use the same durable intent contract rather than a separate scheduling path.
 
 ## Acceptance criteria
 
-Gate 006 is not passed until:
-- a concrete persistence/queue design is approved;
-- unique identity and transaction semantics are documented;
-- crash-window and concurrency tests pass against real adapters;
-- metrics and recovery procedures are defined;
-- webhook-triggered immediate checks use the same durable dispatch contract;
-- the project demonstrates that no non-terminal operation can be stranded solely by a dispatch crash.
-
+Gate 006 remains **NOT PASSED** until the application port carries stable logical intent identity, operation state and work intent are committed atomically, and the concurrency/crash-window tests above pass against the real PostgreSQL adapter. Production readiness remains unproven until operational recovery and metrics are also verified.
