@@ -119,6 +119,7 @@ class PostgresGenerationJobQueue(GenerationJobQueue):
                 """
                 UPDATE generation_work_items
                 SET state = 'PENDING', due_at = now(),
+                    delivery_attempt = delivery_attempt + 1,
                     claim_token = NULL, claimed_by = NULL, claimed_until = NULL,
                     last_error_code = 'DELIVERY_RELEASED'
                 WHERE message_id = %s AND state = 'CLAIMED' AND claim_token = %s
