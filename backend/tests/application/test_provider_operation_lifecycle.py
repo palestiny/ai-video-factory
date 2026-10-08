@@ -258,3 +258,92 @@ def test_terminal_failure_code_survives_replay():
     assert replayed.failure_code == "PROVIDER_FAILURE"
     assert replayed.diagnostics == {"source": "provider"}
     assert replayed.failure_code == first.failure_code
+
+
+def test_poll_atomically_persists_next_work_intent_and_generation():
+    from datetime import datetime, timedelta, timezone
+
+    tx = InMemoryPersistenceTransaction()
+    provider = FakeProvider()
+    service = lifecycle(tx, provider)
+    operation = service.submit(request())
+    provider.status = ProviderOperationStatus.RUNNING
+    due_at = datetime.now(timezone.utc) + timedelta(seconds=5)
+
+    observed = service.poll(
+        operation,
+        next_poll_due_at=due_at,
+        expected_poll_generation=0,
+        job_id="job-1",
+    )
+
+    stored = tx.provider_operations.get("test-provider", operation.operation_id)
+    from app.application.work_intent import WorkIntent
+    intent_key = tx.work_intents.get(
+        WorkIntent.provider_poll_key("test-provider", operation.operation_id, 1)
+    )
+    assert observed.status is ProviderOperationStatus.RUNNING
+    assert stored is not None and stored.poll_generation == 1
+    assert intent_key is not None
+    assert intent_key.due_at == due_at
+
+
+def test_replayed_old_poll_generation_does_not_poll_or_schedule_again():
+    from datetime import datetime, timedelta, timezone
+
+    tx = InMemoryPersistenceTransaction()
+    provider = FakeProvider()
+    service = lifecycle(tx, provider)
+    operation = service.submit(request())
+    provider.status = ProviderOperationStatus.RUNNING
+    due_at = datetime.now(timezone.utc) + timedelta(seconds=5)
+
+    service.poll(
+        operation,
+        next_poll_due_at=due_at,
+        expected_poll_generation=0,
+        job_id="job-1",
+    )
+    replayed = service.poll(
+        operation,
+        next_poll_due_at=due_at + timedelta(seconds=5),
+        expected_poll_generation=0,
+        job_id="job-1",
+    )
+
+    stored = tx.provider_operations.get("test-provider", operation.operation_id)
+    assert provider.polls == 1
+    assert replayed.operation.poll_generation == 1
+    assert stored is not None and stored.poll_generation == 1
+
+
+def test_poll_intent_and_operation_generation_roll_back_together():
+    from datetime import datetime, timedelta, timezone
+    from app.application.work_intent import WorkIntent
+
+    tx = InMemoryPersistenceTransaction()
+    provider = FakeProvider()
+    service = lifecycle(tx, provider)
+    operation = service.submit(request())
+    provider.status = ProviderOperationStatus.RUNNING
+    tx.fail_commit = True
+
+    try:
+        service.poll(
+            operation,
+            next_poll_due_at=datetime.now(timezone.utc) + timedelta(seconds=5),
+            expected_poll_generation=0,
+            job_id="job-1",
+        )
+    except ProviderOperationPersistenceUncertain:
+        pass
+    else:
+        raise AssertionError("failed commit must surface uncertain persistence")
+
+    stored = tx.provider_operations.get("test-provider", operation.operation_id)
+    assert stored is not None
+    assert stored.poll_generation == 0
+    assert stored.status is ProviderOperationStatus.SUBMITTED
+    assert tx.work_intents.get(
+        WorkIntent.provider_poll_key("test-provider", operation.operation_id, 1)
+    ) is None
