@@ -3,6 +3,8 @@ from __future__ import annotations
 from typing import Protocol
 
 from app.application.idempotency import IdempotencyRepository
+from app.application.provider_operation_repository import ProviderOperationRepository
+from app.application.work_intent import WorkIntentRepository
 from app.domain.events import JobEvent
 from app.domain.generation import GenerationAttempt, GenerationJob
 
@@ -48,8 +50,6 @@ class JobEventStore(Protocol):
         ...
 
 
-from app.application.provider_operation_repository import ProviderOperationRepository
-
 class PersistenceTransaction(Protocol):
     """Atomic persistence boundary shared by application use cases.
 
@@ -76,6 +76,7 @@ class SubmissionPersistenceTransaction(PersistenceTransaction, Protocol):
 class ExecutionPersistenceTransaction(PersistenceTransaction, Protocol):
     attempts: GenerationAttemptRepository
     provider_operations: ProviderOperationRepository
+    work_intents: WorkIntentRepository
 
     def assert_lease_owner(self, job_id: str, lease_token: str) -> None:
         """Reject terminal persistence when the worker no longer owns the lease."""
