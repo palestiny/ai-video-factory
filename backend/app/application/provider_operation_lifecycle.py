@@ -86,13 +86,50 @@ class ProviderOperationLifecycle:
                 f"provider operation not found: {(operation.provider, operation.operation_id)}"
             )
 
+        if current.status in {
+            ProviderOperationStatus.SUCCEEDED,
+            ProviderOperationStatus.FAILED,
+            ProviderOperationStatus.CANCELLED,
+        }:
+            # Terminal state and normalized outcome are durable. Replaying a poll
+            # after a worker restart must not lose the result or allow status regression.
+            return ProviderOperationStatusResult(
+                operation=current,
+                status=current.status,
+                result=current.terminal_result,
+                failure_code=current.failure_code,
+                diagnostics=current.diagnostics,
+            )
+
         try:
             status = self._provider.get_status(current)
         except AmbiguousProviderOutcome:
             raise
 
         self._validate_status(status, current)
-        updated = replace(current, status=status.status)
+        updated = replace(
+            current,
+            status=status.status,
+            terminal_result=(
+                status.result
+                if status.status in {
+                    ProviderOperationStatus.SUCCEEDED,
+                    ProviderOperationStatus.FAILED,
+                    ProviderOperationStatus.CANCELLED,
+                }
+                else current.terminal_result
+            ),
+            failure_code=(
+                status.failure_code
+                if status.status in {
+                    ProviderOperationStatus.SUCCEEDED,
+                    ProviderOperationStatus.FAILED,
+                    ProviderOperationStatus.CANCELLED,
+                }
+                else current.failure_code
+            ),
+            diagnostics=status.diagnostics,
+        )
 
         try:
             self._transaction.provider_operations.save(updated)
@@ -155,3 +192,5 @@ class ProviderOperationLifecycle:
             raise ValueError("provider status returned unexpected operation identity")
         if result.operation.idempotency_key != current.idempotency_key:
             raise ValueError("provider status returned unexpected idempotency key")
+        if result.operation.capability != current.capability:
+            raise ValueError("provider status returned unexpected capability")
