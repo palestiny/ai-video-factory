@@ -14,6 +14,10 @@ from app.application.provider_operation import (
 from app.application.reconciliation import AmbiguousProviderOutcome, ProviderExecutionContract
 
 
+class ProviderOperationPersistenceUncertain(RuntimeError):
+    """Provider state was observed, but its local durable update is uncertain."""
+
+
 @dataclass(frozen=True)
 class ProviderOperationPoll:
     operation: ProviderOperation
@@ -95,7 +99,7 @@ class ProviderOperationLifecycle:
             self._transaction.commit()
         except Exception as exc:
             self._transaction.rollback()
-            raise RuntimeError(
+            raise ProviderOperationPersistenceUncertain(
                 "provider status was observed but durable operation state is uncertain"
             ) from exc
 
