@@ -7,11 +7,7 @@ from typing import Protocol
 
 @dataclass(frozen=True)
 class WorkIntent:
-    """A durable request for future work, independent of any delivery attempt.
-
-    The intent key identifies the logical work, not a queue delivery. Retrying
-    delivery must reuse this identity rather than creating another intent.
-    """
+    """A durable request for future work, independent of any delivery attempt."""
 
     intent_key: str
     job_id: str
@@ -42,11 +38,15 @@ class WorkIntent:
 
     @staticmethod
     def provider_poll_key(provider: str, operation_id: str, generation: int) -> str:
+        """Return an injective key encoding; separators inside IDs cannot collide."""
         if not provider.strip() or not operation_id.strip():
             raise ValueError("provider and operation_id cannot be blank")
         if generation < 1:
             raise ValueError("generation must be >= 1")
-        return f"provider-poll:{provider}:{operation_id}:{generation}"
+        return (
+            f"provider-poll:{len(provider)}:{provider}:"
+            f"{len(operation_id)}:{operation_id}:{generation}"
+        )
 
     @classmethod
     def provider_poll(
@@ -73,7 +73,7 @@ class WorkIntentRepository(Protocol):
     """Transactional storage for logical work intents."""
 
     def add_if_absent(self, intent: WorkIntent) -> bool:
-        """Insert once; return False for an identical already-persisted intent.
+        """Insert once; return False for identical existing intent, else conflict.
 
         Raise ValueError if the same stable identity is reused for different
         intent contents. The insert must participate in the enclosing DB
