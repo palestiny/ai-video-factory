@@ -81,6 +81,11 @@ CREATE TABLE IF NOT EXISTS generation_work_items (
     message_id UUID PRIMARY KEY,
     job_id TEXT NOT NULL REFERENCES generation_jobs(job_id) ON DELETE RESTRICT,
     intent_key TEXT NOT NULL UNIQUE CHECK (length(trim(intent_key)) > 0),
+    intent_kind TEXT NOT NULL DEFAULT 'JOB_EXECUTION'
+        CHECK (length(trim(intent_kind)) > 0),
+    provider TEXT,
+    operation_id TEXT,
+    generation BIGINT,
     due_at TIMESTAMPTZ NOT NULL,
     state TEXT NOT NULL DEFAULT 'PENDING'
         CHECK (state IN ('PENDING', 'CLAIMED', 'ACKED', 'DEAD')),
@@ -91,6 +96,15 @@ CREATE TABLE IF NOT EXISTS generation_work_items (
     last_error_code TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     acked_at TIMESTAMPTZ,
+    CHECK (
+        (intent_kind = 'PROVIDER_POLL'
+            AND provider IS NOT NULL AND length(trim(provider)) > 0
+            AND operation_id IS NOT NULL AND length(trim(operation_id)) > 0
+            AND generation IS NOT NULL AND generation >= 1)
+        OR
+        (intent_kind <> 'PROVIDER_POLL'
+            AND provider IS NULL AND operation_id IS NULL AND generation IS NULL)
+    ),
     CHECK (
         (state = 'CLAIMED'
             AND claim_token IS NOT NULL
@@ -104,6 +118,10 @@ CREATE TABLE IF NOT EXISTS generation_work_items (
             AND claimed_until IS NULL)
     )
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_work_items_provider_poll_generation
+    ON generation_work_items (provider, operation_id, generation)
+    WHERE intent_kind = 'PROVIDER_POLL';
 
 CREATE INDEX IF NOT EXISTS ix_work_items_due
     ON generation_work_items (due_at, created_at)
