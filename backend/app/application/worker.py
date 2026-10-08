@@ -11,6 +11,11 @@ class QueueMessage:
     job_id: str
     delivery_attempt: int = 1
     claim_token: str | None = None
+    intent_key: str | None = None
+    intent_kind: str = "JOB_EXECUTION"
+    provider: str | None = None
+    operation_id: str | None = None
+    generation: int | None = None
 
     def __post_init__(self) -> None:
         if not self.message_id.strip():
@@ -19,6 +24,13 @@ class QueueMessage:
             raise ValueError("job_id cannot be blank")
         if self.delivery_attempt < 1:
             raise ValueError("delivery_attempt must be >= 1")
+        if self.intent_kind == "PROVIDER_POLL":
+            if not self.intent_key or not self.provider or not self.operation_id:
+                raise ValueError("provider poll delivery requires intent and operation identity")
+            if self.generation is None or self.generation < 1:
+                raise ValueError("provider poll delivery generation must be >= 1")
+        elif any(value is not None for value in (self.provider, self.operation_id, self.generation)):
+            raise ValueError("non-poll delivery cannot carry provider poll identity")
 
 
 class GenerationJobQueue(Protocol):
