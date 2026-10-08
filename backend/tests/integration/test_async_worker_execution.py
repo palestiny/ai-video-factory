@@ -117,6 +117,35 @@ def test_nonterminal_operation_schedules_next_delivery_and_releases_lease():
     assert len(queue.pending()) == 1
 
 
+
+def test_cancellation_after_provider_success_terminalizes_attempt_without_resurrecting_job():
+    queue, leases, job, jobs, attempts, events, provider, worker = build()
+
+    class CancelDuringPollProvider(AsyncFakeProvider):
+        def get_status(self, operation):
+            result = super().get_status(operation)
+            # Simulate the cancellation transaction committing while the provider
+            # status call is in flight, after it reports success.
+            cancelled = jobs[job.job_id]
+            cancelled.cancel()
+            jobs[job.job_id] = cancelled
+            return result
+
+    provider = CancelDuringPollProvider()
+    provider.status = ProviderOperationStatus.SUCCEEDED
+    worker._providers = AsyncResolver(provider)
+    message = queue.enqueue(job.job_id)
+
+    result = worker.handle(message, "worker-a", NOW, {"prompt": "a shot"})
+
+    assert result.status is WorkerDeliveryStatus.ACKED
+    assert jobs[job.job_id].status is GenerationStatus.CANCELLED
+    assert attempts["async-job:attempt-1"][-1].status.value == "CANCELLED"
+    assert attempts["async-job:attempt-1"][-1].provider_operation_id == "op-1"
+    assert provider.submissions == 1
+    assert provider.polls == 1
+    assert queue.is_acked(message.message_id)
+
 def test_terminal_success_completes_job_and_attempt_on_later_delivery():
     queue, leases, job, jobs, attempts, events, provider, worker = build()
     first = queue.enqueue(job.job_id)
