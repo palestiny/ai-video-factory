@@ -89,3 +89,26 @@ def test_postgres_queue_does_not_claim_future_work():
         "worker-a", datetime.now(timezone.utc), timedelta(seconds=30)
     )
     assert message is None
+
+
+def test_postgres_queue_claim_preserves_provider_poll_identity():
+    _prepare()
+    now = datetime.now(timezone.utc)
+    intent = WorkIntent.provider_poll(
+        job_id="postgres-queue-job",
+        provider="provider-a",
+        operation_id="operation-a",
+        generation=4,
+        due_at=now - timedelta(seconds=1),
+    )
+    with psycopg.connect(os.environ["DATABASE_URL"]) as connection:
+        assert PostgresWorkIntentRepository(connection).add_if_absent(intent)
+
+    message = _queue().claim_next("worker-a", now, timedelta(seconds=30))
+
+    assert message is not None
+    assert message.intent_key == intent.intent_key
+    assert message.intent_kind == "PROVIDER_POLL"
+    assert message.provider == "provider-a"
+    assert message.operation_id == "operation-a"
+    assert message.generation == 4
