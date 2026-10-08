@@ -55,6 +55,8 @@ CREATE TABLE IF NOT EXISTS provider_operations (
     terminal_result JSONB,
     failure_code TEXT,
     diagnostics JSONB NOT NULL DEFAULT '{}'::jsonb,
+    -- Identifies the next scheduled poll intent; increment atomically with its insertion.
+    poll_generation BIGINT NOT NULL DEFAULT 0 CHECK (poll_generation >= 0),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (provider, idempotency_key),
     UNIQUE (provider, operation_id)
