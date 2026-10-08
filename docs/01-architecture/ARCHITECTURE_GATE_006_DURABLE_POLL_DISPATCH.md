@@ -86,7 +86,7 @@ The initial schema is not proof of the above semantics. The adapter must define 
 - The current `ProviderOperationLifecycle.poll` commits operation state internally; atomic poll-intent insertion requires refactoring this transaction boundary or introducing an explicit transaction-scoped operation.
 - The durable poll-generation field exists in the model/schema, but its increment/locking semantics are not implemented. Do not infer generation from status transitions; multiple polls can observe the same status. Generation advancement must be atomic with insertion of the corresponding intent and covered by concurrency tests.
 - The work-intent contract and in-memory repository are now present, but they are not yet wired into poll lifecycle execution.
-- The PostgreSQL migration exists, but no production PostgreSQL repository/transaction adapter or queue implementation is established yet.
+- A transaction-scoped `PostgresWorkIntentRepository` has now been added. It uses the caller-owned psycopg connection, inserts queue rows without committing, and verifies duplicate stable keys against stored intent contents. Its focused PostgreSQL integration tests are awaiting the latest CI result. This is a repository adapter only: the complete PostgreSQL transaction factory, provider-operation adapter, and durable queue claim/ACK implementation are not established yet.
 - The migration smoke test verifies schema application and selected constraints only; it does not prove atomicity, concurrency, fencing, or crash recovery.
 - Webhook-triggered immediate checks must eventually use the same durable intent contract rather than a separate scheduling path.
 
