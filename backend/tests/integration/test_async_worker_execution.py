@@ -146,6 +146,26 @@ def test_cancellation_after_provider_success_terminalizes_attempt_without_resurr
     assert provider.polls == 1
     assert queue.is_acked(message.message_id)
 
+def test_cancelled_job_redelivery_terminalizes_attempt_without_polling_provider():
+    queue, leases, job, jobs, attempts, events, provider, worker = build()
+    first = queue.enqueue(job.job_id)
+    first_result = worker.handle(first, "worker-a", NOW, {"prompt": "a shot"})
+    assert first_result.status is WorkerDeliveryStatus.ACKED
+    assert attempts["async-job:attempt-1"][-1].status.value == "RUNNING"
+
+    jobs[job.job_id].cancel()
+    cancelled_delivery = queue.enqueue(job.job_id)
+
+    result = worker.handle(cancelled_delivery, "worker-b", NOW + timedelta(seconds=1), {})
+
+    assert result.status is WorkerDeliveryStatus.ACKED
+    assert jobs[job.job_id].status is GenerationStatus.CANCELLED
+    assert attempts["async-job:attempt-1"][-1].status.value == "CANCELLED"
+    assert attempts["async-job:attempt-1"][-1].provider_operation_id == "op-1"
+    assert provider.polls == 1
+    assert queue.is_acked(cancelled_delivery.message_id)
+
+
 def test_terminal_success_completes_job_and_attempt_on_later_delivery():
     queue, leases, job, jobs, attempts, events, provider, worker = build()
     first = queue.enqueue(job.job_id)
