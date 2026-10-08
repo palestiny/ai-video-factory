@@ -276,11 +276,41 @@ class ExecuteAsyncProviderDelivery:
             # cancellation committed during provider execution cannot be resurrected.
             finalize_tx = self._transaction_factory()
             current_job = finalize_tx.jobs.get(message.job_id)
-            if current_job is None or current_job.status is GenerationStatus.CANCELLED:
+            if current_job is None:
                 self._queue.ack(message)
                 return self._result(
                     message, WorkerDeliveryStatus.ACKED,
-                    "late provider outcome ignored because job is cancelled or missing",
+                    "late provider outcome ignored because job is missing",
+                )
+            if current_job.status is GenerationStatus.CANCELLED:
+                # Cancellation owns the job outcome, but the provider attempt must
+                # still become terminal so it does not remain RUNNING forever.
+                attempt_id = f"{current_job.job_id}:attempt-{current_job.attempt_count}"
+                history = finalize_tx.attempts.history(attempt_id)
+                if history and history[-1].status is AttemptStatus.RUNNING:
+                    started_attempt = history[-1]
+                    finalize_tx.attempts.complete(GenerationAttempt.cancelled(
+                        attempt_id=started_attempt.attempt_id,
+                        job_id=started_attempt.job_id,
+                        attempt_number=started_attempt.attempt_number,
+                        provider=provider_name,
+                        started_at=started_attempt.started_at,
+                        completed_at=now,
+                        provider_operation_id=operation.operation_id,
+                    ))
+                    try:
+                        finalize_tx.commit()
+                    except Exception:
+                        finalize_tx.rollback()
+                        self._queue.release_or_requeue(message)
+                        return self._result(
+                            message, WorkerDeliveryStatus.REQUEUED,
+                            "cancelled job attempt finalization failed; redelivery will retry",
+                        )
+                self._queue.ack(message)
+                return self._result(
+                    message, WorkerDeliveryStatus.ACKED,
+                    "late provider outcome ignored; cancelled job attempt terminalized",
                 )
             if current_job.status is GenerationStatus.SUCCEEDED:
                 self._queue.ack(message)
