@@ -1,23 +1,28 @@
-"""Real-PostgreSQL smoke test for the initial durable-work schema.
+"""Real-PostgreSQL smoke tests for the initial durable-work schema.
 
-The CI workflow provides an isolated PostgreSQL database. The migration is
-intentionally applied to a clean database; adapter behavior is tested later.
+The CI workflow provides an isolated PostgreSQL database. These tests verify
+that the schema applies and key database-enforced invariants exist; they do
+not claim to test a production repository, queue adapter, or claim protocol.
 """
 from pathlib import Path
 import os
 
 import psycopg
+import pytest
 
 
 MIGRATION = Path(__file__).parents[2] / "migrations" / "0001_postgresql_durable_work.sql"
 
 
+def _apply_migration(connection: psycopg.Connection) -> None:
+    connection.execute(MIGRATION.read_text(encoding="utf-8"))
+
+
 def test_durable_work_migration_applies_and_creates_required_tables():
     database_url = os.environ["DATABASE_URL"]
-    sql = MIGRATION.read_text(encoding="utf-8")
 
     with psycopg.connect(database_url, autocommit=True) as connection:
-        connection.execute(sql)
+        _apply_migration(connection)
         rows = connection.execute(
             """
             SELECT table_name
@@ -36,3 +41,76 @@ def test_durable_work_migration_applies_and_creates_required_tables():
         "job_events",
         "generation_work_items",
     } <= tables
+
+
+def test_work_intent_key_is_database_unique():
+    """A repeated logical intent must not become a second queue row."""
+    database_url = os.environ["DATABASE_URL"]
+
+    with psycopg.connect(database_url, autocommit=True) as connection:
+        _apply_migration(connection)
+        connection.execute(
+            """
+            INSERT INTO generation_jobs
+                (job_id, capability, idempotency_key, status)
+            VALUES ('schema-constraint-job', 'video', 'schema-constraint-key', 'RUNNING')
+            ON CONFLICT (job_id) DO NOTHING
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO generation_work_items
+                (message_id, job_id, intent_key, due_at)
+            VALUES (
+                '00000000-0000-0000-0000-000000000001',
+                'schema-constraint-job',
+                'provider-op-1:poll:1',
+                now()
+            )
+            """
+        )
+
+        with pytest.raises(psycopg.errors.UniqueViolation):
+            connection.execute(
+                """
+                INSERT INTO generation_work_items
+                    (message_id, job_id, intent_key, due_at)
+                VALUES (
+                    '00000000-0000-0000-0000-000000000002',
+                    'schema-constraint-job',
+                    'provider-op-1:poll:1',
+                    now()
+                )
+                """
+            )
+
+
+def test_claimed_work_requires_a_lease_token_and_expiry():
+    """The database must reject a CLAIMED row that cannot be fenced/recovered."""
+    database_url = os.environ["DATABASE_URL"]
+
+    with psycopg.connect(database_url, autocommit=True) as connection:
+        _apply_migration(connection)
+        connection.execute(
+            """
+            INSERT INTO generation_jobs
+                (job_id, capability, idempotency_key, status)
+            VALUES ('schema-claim-job', 'video', 'schema-claim-key', 'RUNNING')
+            ON CONFLICT (job_id) DO NOTHING
+            """
+        )
+
+        with pytest.raises(psycopg.errors.CheckViolation):
+            connection.execute(
+                """
+                INSERT INTO generation_work_items
+                    (message_id, job_id, intent_key, due_at, state)
+                VALUES (
+                    '00000000-0000-0000-0000-000000000003',
+                    'schema-claim-job',
+                    'provider-op-claim:poll:1',
+                    now(),
+                    'CLAIMED'
+                )
+                """
+            )
