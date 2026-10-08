@@ -13,5 +13,9 @@ dev = [
   "ruff>=0.6"
 ]
 
+[tool.setuptools.packages.find]
+include = ["app*"]
+exclude = ["tests*", "migrations*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
