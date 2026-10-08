@@ -153,3 +153,52 @@ def test_terminal_operation_replay_finishes_job_after_commit_failure_without_res
     assert jobs[job.job_id].status is GenerationStatus.SUCCEEDED
     assert provider.submissions == 1
     assert provider.polls == 1
+
+
+def test_ambiguous_non_reconcilable_submission_is_terminalized_not_requeued_forever():
+    from app.application.worker_execution import WorkerDeliveryStatus
+    from app.domain.generation import GenerationAttempt
+
+    queue = InMemoryGenerationJobQueue()
+    leases = InMemoryWorkerLeaseRepository()
+    job = GenerationJob.create("async-ambiguous", "video", "async-ambiguous/v1")
+    job.start()
+    jobs = {job.job_id: job}
+    attempts = {
+        f"{job.job_id}:attempt-1": [
+            GenerationAttempt.started(
+                f"{job.job_id}:attempt-1", job.job_id, 1, "async-fake", NOW
+            )
+        ]
+    }
+    events = []
+    operations = {}
+
+    def factory():
+        return InMemoryPersistenceTransaction(
+            jobs=jobs, attempts=attempts, provider_operations=operations,
+            events=events, lease_repository=leases,
+        )
+
+    provider = AsyncFakeProvider()
+
+    class NonReconcilableContract:
+        def resolve_contract(self, provider_name):
+            return ProviderExecutionContract(
+                provider_name, ProviderOperationSafety.NON_RECONCILABLE
+            )
+
+    worker = ExecuteAsyncProviderDelivery(
+        queue, leases, factory, AsyncResolver(provider), NonReconcilableContract(),
+        timedelta(minutes=1),
+    )
+    message = queue.enqueue(job.job_id)
+
+    result = worker.handle(message, "worker-a", NOW, {})
+
+    assert result.status is WorkerDeliveryStatus.ACKED
+    assert jobs[job.job_id].status is GenerationStatus.FAILED
+    assert jobs[job.job_id].failure_code == "RECONCILIATION_REQUIRED"
+    assert attempts[f"{job.job_id}:attempt-1"][-1].failure_code == "RECONCILIATION_REQUIRED"
+    assert provider.submissions == 0
+    assert queue.is_acked(message.message_id)
