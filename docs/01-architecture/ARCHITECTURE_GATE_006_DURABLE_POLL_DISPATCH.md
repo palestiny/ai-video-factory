@@ -127,15 +127,13 @@ Gate 006 remains **NOT PASSED** until the runtime entrypoint wires the configure
 - Backend Tests run [#615](https://github.com/palestiny/ai-video-factory/actions/runs/37925536606) passed on commit `479574c7ce6618ce206a2c808bf8e7cfcb92eb4b` with **176 passed**. Added a read-only PostgreSQL queue health snapshot reporting pending/due-pending work, active and expired claims, dead-letter count, oldest unresolved age, oldest due-pending age, and maximum delivery attempt. The integration test validates metric deltas against real PostgreSQL rows without assuming an empty shared test database. This improves operational visibility but is not a metrics exporter, alerting policy, or production health endpoint; Gate 006 remains **NOT PASSED** pending the remaining runtime/deployment and lifecycle verification work.
 
 
-## Shared PostgreSQL transaction adapter — 2026-10-09
+## PostgreSQL transaction and concurrency verification — 2026-10-09
 
-The branch now contains `PostgresPersistenceTransaction`, composing the job, attempt-history, event, idempotency, provider-operation, and work-intent adapters over one caller-owned psycopg connection. Repository adapters do not independently commit. The transaction owner controls commit/rollback, and a lease checked during execution is revalidated under a row lock at commit time so an expired/replaced lease rejects the staged writes.
+- `PostgresPersistenceTransaction` composes job, append-only attempt-history, event, idempotency, provider-operation, and work-intent adapters over one caller-owned psycopg connection. It owns commit/rollback; individual repositories do not commit independently. Worker-lease ownership is revalidated under a row lock at commit time.
+- PostgreSQL integration tests cover all-staged-write commit/rollback, idempotency reservation before job insertion (including concurrent same-key submissions), active/mismatched/expired lease rejection, and rejection when the lease expires between initial validation and commit.
+- Backend Tests run [#619](https://github.com/palestiny/ai-video-factory/actions/runs/37926625872) passed with **176 passed**. This run verified the composed transaction and prior crash/restart recovery coverage.
+- Added a two-worker PostgreSQL race test: both pollers observe the same operation version, but only one can commit generation 1; the other is fenced by optimistic compare-and-swap. Backend Tests run [#621](https://github.com/palestiny/ai-video-factory/actions/runs/37926921535) passed with **177 passed**.
+- Added a controlled terminal-vs-stale-poll race: a stale RUNNING observation loaded before a SUCCEEDED commit cannot overwrite the terminal result or create a new poll intent. Backend Tests run [#623](https://github.com/palestiny/ai-video-factory/actions/runs/37927004020) passed with **178 passed**.
+- Earlier PostgreSQL worker tests already cover process interruption after operation/poll-intent commit but before source ACK, followed by fresh queue/worker instances and recovery. The cancellation-vs-provider-success race is also covered by run [#573](https://github.com/palestiny/ai-video-factory/actions/runs/37908133064).
 
-Integration coverage has been added for:
-- committing provider-operation state, poll intent, attempt history, and event together;
-- rolling those writes back together;
-- active, mismatched, and expired worker-lease rejection, including lease expiry before commit;
-- reserving an idempotency key before inserting its job in the same transaction;
-- concurrent same-key submissions resolving to one durable job.
-
-**Evidence status:** implementation and tests are present in the branch; the CI run for this adapter/test revision must be inspected before treating these behaviors as verified. Gate 006 remains **NOT PASSED** until the PostgreSQL integration suite is green and crash/restart recovery is demonstrated end-to-end.
+**Gate status: NOT PASSED.** The newly added concurrency cases are green, but that does not close production readiness. A long-running entrypoint/deployment configuration remains intentionally blocked on Architecture Gate 008, which must decide durable request payload rehydration, input/reference/constraint persistence, size limits, sensitive-data handling, and retention. Remaining operational work includes explicit startup/shutdown/health behavior and a documented recovery/alerting procedure. Do not mark Gate 006 passed or merge PR #1 yet.
