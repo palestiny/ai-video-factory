@@ -271,14 +271,14 @@ class PostgresPersistenceTransaction(
             SELECT job_id
             FROM generation_worker_leases
             WHERE job_id = %s
-              AND AND lease_token = %s::uuid
+              AND lease_token = %s::uuid
               AND expires_at > clock_timestamp()
             """,
             (job_id, lease_token),
         ).fetchone()
         if row is None:
             raise LeaseOwnershipLost(f"lease ownership lost: {job_id}")
-        # Revalidate and lock only at commit time. Do not hold the queue-row lock
+        # Revalidate and lock only at commit time. Do not hold the execution-lease row lock
         # across a potentially slow external provider call.
         self._lease_checks.add((job_id, lease_token))
 
@@ -290,7 +290,7 @@ class PostgresPersistenceTransaction(
                     SELECT job_id
                     FROM generation_worker_leases
                     WHERE job_id = %s
-                      AND AND lease_token = %s::uuid
+                      AND lease_token = %s::uuid
                       AND expires_at > clock_timestamp()
                     FOR UPDATE
                     """,
