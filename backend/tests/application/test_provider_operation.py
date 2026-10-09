@@ -82,6 +82,7 @@ def test_operation_identity_is_durable_across_status_update():
         idempotency_key="job/1",
         capability="video",
         status=ProviderOperationStatus.RUNNING,
+        version=1,
     )
     repo.save(updated)
 
