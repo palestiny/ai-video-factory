@@ -19,6 +19,8 @@ class InMemoryProviderOperationRepository(ProviderOperationRepository):
         existing = self.get_by_idempotency_key(operation.provider, operation.idempotency_key)
         if existing is not None:
             raise ValueError("provider operation idempotency key already exists")
+        if operation.version != 0:
+            raise ValueError("new provider operation must start at version 0")
         self._items[key] = deepcopy(operation)
 
     def get(self, provider: str, operation_id: str) -> ProviderOperation | None:
@@ -27,8 +29,11 @@ class InMemoryProviderOperationRepository(ProviderOperationRepository):
 
     def save(self, operation: ProviderOperation) -> None:
         key = (operation.provider, operation.operation_id)
-        if key not in self._items:
+        current = self._items.get(key)
+        if current is None:
             raise KeyError(f"provider operation not found: {key}")
+        if operation.version != current.version + 1:
+            raise ValueError("provider operation version conflict")
         self._items[key] = deepcopy(operation)
 
     def get_by_idempotency_key(
