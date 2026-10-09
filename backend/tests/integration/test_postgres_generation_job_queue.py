@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 import os
 from pathlib import Path
@@ -145,3 +146,25 @@ def test_postgres_queue_rejects_ack_and_release_after_lease_expiry():
     assert reclaimed.message_id == message.message_id
     assert reclaimed.claim_token != message.claim_token
     queue.ack(reclaimed)
+
+
+def test_postgres_queue_concurrent_claimers_receive_distinct_work_items():
+    _prepare()
+    queue = _queue()
+    first_queued = queue.enqueue("postgres-queue-job")
+    second_queued = queue.enqueue("postgres-queue-job")
+    now = datetime.now(timezone.utc)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [
+            executor.submit(
+                queue.claim_next, f"worker-{index}", now, timedelta(minutes=1)
+            )
+            for index in range(2)
+        ]
+        claimed = [future.result() for future in futures]
+
+    assert all(message is not None for message in claimed)
+    claimed_ids = {message.message_id for message in claimed if message is not None}
+    assert claimed_ids == {first_queued.message_id, second_queued.message_id}
+    assert len({message.claim_token for message in claimed if message is not None}) == 2
