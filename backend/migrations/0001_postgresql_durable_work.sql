@@ -151,16 +151,5 @@ CREATE INDEX IF NOT EXISTS ix_work_items_expired_claim
     ON generation_work_items (claimed_until)
     WHERE state = 'CLAIMED';
 
-CREATE TABLE IF NOT EXISTS generation_worker_leases (
-    job_id TEXT PRIMARY KEY REFERENCES generation_jobs(job_id) ON DELETE RESTRICT,
-    worker_id TEXT NOT NULL CHECK (length(trim(worker_id)) > 0),
-    lease_token UUID NOT NULL UNIQUE,
-    acquired_at TIMESTAMPTZ NOT NULL,
-    expires_at TIMESTAMPTZ NOT NULL,
-    CHECK (expires_at > acquired_at)
-);
-
-CREATE INDEX IF NOT EXISTS ix_generation_worker_leases_expiry
-    ON generation_worker_leases (expires_at);
 
 COMMIT;
