@@ -22,10 +22,15 @@ CREATE TABLE IF NOT EXISTS idempotency_reservations (
     scope TEXT NOT NULL CHECK (length(trim(scope)) > 0),
     idempotency_key TEXT NOT NULL CHECK (length(trim(idempotency_key)) > 0),
     request_fingerprint TEXT NOT NULL CHECK (length(trim(request_fingerprint)) > 0),
-    job_id TEXT NOT NULL REFERENCES generation_jobs(job_id) ON DELETE RESTRICT,
+    job_id TEXT NOT NULL REFERENCES generation_jobs(job_id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (scope, idempotency_key)
 );
+
+-- Submission reserves idempotency before inserting the job; defer this FK until commit.
+ALTER TABLE idempotency_reservations
+    ALTER CONSTRAINT idempotency_reservations_job_id_fkey
+    DEFERRABLE INITIALLY DEFERRED;
 
 CREATE TABLE IF NOT EXISTS generation_attempt_versions (
     attempt_id TEXT NOT NULL,
