@@ -40,6 +40,7 @@ def test_durable_work_migration_applies_and_creates_required_tables():
         "provider_operations",
         "job_events",
         "generation_work_items",
+        "generation_worker_leases",
     } <= tables
 
 
