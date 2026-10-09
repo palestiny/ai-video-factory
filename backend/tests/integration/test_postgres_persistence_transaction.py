@@ -172,21 +172,20 @@ def test_transaction_validates_active_lease_token_and_expiry():
     with psycopg.connect(_database()) as connection:
         connection.execute(
             """
-            INSERT INTO generation_work_items
-                (message_id, job_id, intent_key, intent_kind, due_at, state,
-                 claim_token, claimed_by, claimed_until)
-            VALUES (%s, %s, %s, 'JOB_EXECUTION', now(), 'CLAIMED',
-                    %s, 'transaction-test-worker', now() + interval '2 minutes')
+            INSERT INTO generation_worker_leases
+                (job_id, worker_id, lease_token, acquired_at, expires_at)
+            VALUES (%s, 'transaction-test-worker', %s, now(),
+                    now() + interval '2 minutes')
             """,
-            (message_id, job_id, "tx-lease-" + uuid4().hex, token),
+            (job_id, token),
         )
         transaction = PostgresPersistenceTransaction(connection)
         transaction.assert_lease_owner(job_id, str(token))
         with pytest.raises(LeaseOwnershipLost):
             transaction.assert_lease_owner(job_id, str(uuid4()))
         connection.execute(
-            "UPDATE generation_work_items SET claimed_until = now() - interval '1 second' WHERE message_id = %s",
-            (message_id,),
+            "UPDATE generation_worker_leases SET expires_at = now() - interval '1 second' WHERE job_id = %s",
+            (job_id,),
         )
         with pytest.raises(LeaseOwnershipLost):
             transaction.commit()
