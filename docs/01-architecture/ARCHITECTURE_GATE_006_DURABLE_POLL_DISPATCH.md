@@ -120,3 +120,6 @@ Gate 006 remains **NOT PASSED** until the runtime entrypoint wires the configure
 
 
 - Backend Tests run [#603](https://github.com/palestiny/ai-video-factory/actions/runs/37915421934) passed on the current branch commit `411ca06f71d3be58ed5bf15a404e535dcc72de2c` with **174 passed**. This run includes the composed PostgreSQL persistence transaction, commit/rollback atomicity across provider-operation state, poll intents, attempt history and events, idempotency reservation, worker-lease fencing/revalidation, and the existing crash/restart recovery integration coverage. Gate 006 remains **NOT PASSED**: broad concurrent terminal/stale-generation/cancellation verification and production runtime/deployment readiness remain open.
+
+
+- Backend Tests run [#607](https://github.com/palestiny/ai-video-factory/actions/runs/37916239884) passed on commit `26d931ac3d6ef8d21ad94b107eeaeef9f520a082` with **175 passed**. Added a real-PostgreSQL concurrency test proving two simultaneous reservations for the same idempotency key and canonical fingerprint resolve to one durable job: exactly one `CREATED`, one `EXISTING`, and no duplicate job row. This strengthens submission concurrency evidence; Gate 006 remains **NOT PASSED** pending broader concurrent terminal/stale-generation/cancellation verification and runtime/deployment readiness.
