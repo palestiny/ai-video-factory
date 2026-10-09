@@ -81,6 +81,7 @@ The initial schema is not proof of the above semantics. The adapter must define 
 
 - `ProviderOperation` now carries a non-negative optimistic `version`; lifecycle polling advances it with each accepted observation. The PostgreSQL provider-operation adapter uses compare-and-swap updates against the previous version and rejects stale concurrent writers. Terminal rows cannot be changed to a different status by a stale write.
 - `PostgresProviderOperationRepository` and `PostgresWorkIntentRepository` are caller-connection adapters that do not commit independently. `PostgresPersistenceTransaction` composes these with job, attempt, event, and idempotency adapters over the same connection. PostgreSQL integration tests cover all-staged-writes rollback/commit, idempotency-before-job insertion with a deferred FK, active/expired lease rejection, and revalidation when a lease expires before commit. Backend Tests run [#551](https://github.com/palestiny/ai-video-factory/actions/runs/37905479770) passed after the execution-lease SQL correction.
+- A fresh `ProviderOperationLifecycle` instance now has PostgreSQL integration coverage for stale-generation replay and terminal-result replay after reconnect/restart: it returns the durable authoritative operation and does not call the provider again. Backend Tests run [#555](https://github.com/palestiny/ai-video-factory/actions/runs/37905709840) passed with this regression test.
 
 ## PostgreSQL transaction composition update (2026-10-09)
 
