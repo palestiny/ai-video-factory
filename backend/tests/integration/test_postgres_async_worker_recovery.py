@@ -210,6 +210,22 @@ def test_async_worker_recovers_after_commit_before_ack_using_postgres():
     assert provider.submissions == 1
     assert provider.polls == 2
 
+    # A duplicate/stale execution delivery after terminal success must be
+    # acknowledged without polling the provider or scheduling another intent.
+    restarted_queue.enqueue(job_id)
+    stale_delivery = restarted_queue.claim_next(
+        "worker-after-restart",
+        now + timedelta(minutes=2),
+        timedelta(minutes=2),
+    )
+    assert stale_delivery is not None
+    stale_result = restarted_worker.handle(
+        stale_delivery, "worker-after-restart", now + timedelta(minutes=2), {}
+    )
+    assert stale_result.status is WorkerDeliveryStatus.ACKED
+    assert provider.submissions == 1
+    assert provider.polls == 2
+
     with psycopg.connect(database_url) as connection:
         job = connection.execute(
             "SELECT status FROM generation_jobs WHERE job_id = %s", (job_id,)
