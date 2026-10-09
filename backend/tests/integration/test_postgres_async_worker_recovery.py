@@ -297,6 +297,7 @@ def test_poll_transaction_is_fenced_if_worker_lease_expires_during_provider_call
         )
 
     queue = PostgresGenerationJobQueue(lambda: psycopg.connect(database_url))
+    queue.enqueue(job_id)
     leases = PostgresWorkerLeaseRepository(lambda: psycopg.connect(database_url))
     provider = LeaseExpiringProvider(database_url, job_id)
     worker = ExecuteAsyncProviderDelivery(
