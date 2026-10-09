@@ -117,3 +117,6 @@ The initial schema is not proof of the above semantics. The adapter must define 
 ## Acceptance criteria
 
 Gate 006 remains **NOT PASSED** until the runtime entrypoint wires the configured connection factory and remaining terminal/stale-delivery invariants are verified under concurrent PostgreSQL workers. Repository-level atomicity, lease fencing, and the async-worker crash/restart integration test now pass, but the remaining invariants still need explicit evidence.
+
+
+- Backend Tests run [#603](https://github.com/palestiny/ai-video-factory/actions/runs/37915421934) passed on the current branch commit `411ca06f71d3be58ed5bf15a404e535dcc72de2c` with **174 passed**. This run includes the composed PostgreSQL persistence transaction, commit/rollback atomicity across provider-operation state, poll intents, attempt history and events, idempotency reservation, worker-lease fencing/revalidation, and the existing crash/restart recovery integration coverage. Gate 006 remains **NOT PASSED**: broad concurrent terminal/stale-generation/cancellation verification and production runtime/deployment readiness remain open.
