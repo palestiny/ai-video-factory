@@ -84,6 +84,7 @@ class ExecuteAsyncProviderDelivery:
 
         try:
             tx = self._transaction_factory()
+            tx.assert_lease_owner(message.job_id, lease.lease_token)
             job = tx.jobs.get(message.job_id)
             if job is None:
                 self._queue.ack(message)
@@ -319,6 +320,7 @@ class ExecuteAsyncProviderDelivery:
             # Re-read authoritative job state immediately before finalization so a
             # cancellation committed during provider execution cannot be resurrected.
             finalize_tx = self._transaction_factory()
+            finalize_tx.assert_lease_owner(message.job_id, lease.lease_token)
             current_job = finalize_tx.jobs.get(message.job_id)
             if current_job is None:
                 self._queue.ack(message)
