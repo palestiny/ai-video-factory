@@ -23,6 +23,7 @@ def _prepare() -> None:
     database_url = os.environ["DATABASE_URL"]
     with psycopg.connect(database_url) as connection:
         connection.execute(MIGRATION.read_text(encoding="utf-8"))
+        connection.execute("DELETE FROM generation_work_items WHERE state IN ('PENDING', 'CLAIMED')")
         connection.execute(
             """
             INSERT INTO generation_jobs
