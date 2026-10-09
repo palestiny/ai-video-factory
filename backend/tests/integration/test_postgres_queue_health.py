@@ -20,6 +20,8 @@ def test_postgres_queue_health_reports_due_work_expired_claims_and_dead_letters(
     suffix = uuid4().hex
     job_id = f"queue-health-{suffix}"
     now = datetime.now(timezone.utc)
+    reader = PostgresQueueHealthReader(lambda: psycopg.connect(database_url))
+    before = reader.snapshot()
     rows = [
         # state, due offset, created offset, delivery attempt, claim state, error
         ("PENDING", -30, -45, 1, None, None),
@@ -58,17 +60,14 @@ def test_postgres_queue_health_reports_due_work_expired_claims_and_dead_letters(
                 ),
             )
 
-    snapshot = PostgresQueueHealthReader(
-        lambda: psycopg.connect(database_url)
-    ).snapshot()
+    snapshot = reader.snapshot()
 
-    # This database is shared across integration tests, so assertions are based
-    # on the unique rows inserted by this test rather than global totals.
-    assert snapshot.pending_count >= 2
-    assert snapshot.due_pending_count >= 1
-    assert snapshot.active_claim_count >= 1
-    assert snapshot.expired_claim_count >= 1
-    assert snapshot.dead_count >= 1
+    # Use deltas because other integration tests may share this database.
+    assert snapshot.pending_count - before.pending_count == 2
+    assert snapshot.due_pending_count - before.due_pending_count == 1
+    assert snapshot.active_claim_count - before.active_claim_count == 1
+    assert snapshot.expired_claim_count - before.expired_claim_count == 1
+    assert snapshot.dead_count - before.dead_count == 1
     assert snapshot.oldest_unresolved_age_seconds is not None
     assert snapshot.oldest_unresolved_age_seconds >= 450
     assert snapshot.oldest_due_pending_age_seconds is not None
