@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 
-from app.application.provider_operation import ProviderOperation
+from app.application.provider_operation import ProviderOperation, ProviderOperationStatus
 from app.application.provider_operation_repository import ProviderOperationRepository
 
 
@@ -34,6 +34,12 @@ class InMemoryProviderOperationRepository(ProviderOperationRepository):
             raise KeyError(f"provider operation not found: {key}")
         if operation.version != current.version + 1:
             raise ValueError("provider operation version conflict")
+        if current.status in {
+            ProviderOperationStatus.SUCCEEDED,
+            ProviderOperationStatus.FAILED,
+            ProviderOperationStatus.CANCELLED,
+        } and operation.status is not current.status:
+            raise ValueError("terminal provider operation status cannot regress")
         self._items[key] = deepcopy(operation)
 
     def get_by_idempotency_key(
