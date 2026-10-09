@@ -273,7 +273,7 @@ class PostgresPersistenceTransaction(
             WHERE job_id = %s
               AND state = 'CLAIMED'
               AND claim_token = %s::uuid
-              AND claimed_until > now()
+              AND claimed_until > clock_timestamp()
             """,
             (job_id, lease_token),
         ).fetchone()
@@ -293,7 +293,7 @@ class PostgresPersistenceTransaction(
                     WHERE job_id = %s
                       AND state = 'CLAIMED'
                       AND claim_token = %s::uuid
-                      AND claimed_until > now()
+                      AND claimed_until > clock_timestamp()
                     FOR UPDATE
                     """,
                     (job_id, lease_token),
