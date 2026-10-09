@@ -268,11 +268,12 @@ class PostgresPersistenceTransaction(
             raise LeaseOwnershipLost(f"lease ownership lost: {job_id}")
         row = self._connection.execute(
             """
-            SELECT job_id
-            FROM generation_worker_leases
+            SELECT message_id
+            FROM generation_work_items
             WHERE job_id = %s
-              AND lease_token = %s::uuid
-              AND expires_at > clock_timestamp()
+              AND state = 'CLAIMED'
+              AND claim_token = %s::uuid
+              AND claimed_until > clock_timestamp()
             """,
             (job_id, lease_token),
         ).fetchone()
@@ -287,11 +288,12 @@ class PostgresPersistenceTransaction(
             for job_id, lease_token in sorted(self._lease_checks):
                 row = self._connection.execute(
                     """
-                    SELECT job_id
-                    FROM generation_worker_leases
+                    SELECT message_id
+                    FROM generation_work_items
                     WHERE job_id = %s
-                      AND lease_token = %s::uuid
-                      AND expires_at > clock_timestamp()
+                      AND state = 'CLAIMED'
+                      AND claim_token = %s::uuid
+                      AND claimed_until > clock_timestamp()
                     FOR UPDATE
                     """,
                     (job_id, lease_token),
@@ -299,6 +301,7 @@ class PostgresPersistenceTransaction(
                 if row is None:
                     raise LeaseOwnershipLost(f"lease ownership lost: {job_id}")
             self._connection.commit()
+            self._lease_checks.clear()
         except Exception:
             self._connection.rollback()
             self._lease_checks.clear()
@@ -306,3 +309,4 @@ class PostgresPersistenceTransaction(
 
     def rollback(self) -> None:
         self._connection.rollback()
+        self._lease_checks.clear()
