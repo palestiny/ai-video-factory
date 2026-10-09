@@ -106,6 +106,7 @@ def test_async_worker_recovers_after_commit_before_ack_using_postgres():
     now = datetime.now(timezone.utc)
     with psycopg.connect(database_url) as connection:
         connection.execute(MIGRATION.read_text(encoding="utf-8"))
+        connection.execute("DELETE FROM generation_work_items WHERE state IN ('PENDING', 'CLAIMED')")
         connection.execute(
             """
             INSERT INTO generation_jobs (job_id, capability, idempotency_key, status)
@@ -134,6 +135,7 @@ def test_async_worker_recovers_after_commit_before_ack_using_postgres():
         )
 
     base_queue.enqueue(job_id)
+    now = datetime.now(timezone.utc) + timedelta(seconds=1)
     first_delivery = base_queue.claim_next("worker-before-crash", now, timedelta(seconds=30))
     assert first_delivery is not None
 
