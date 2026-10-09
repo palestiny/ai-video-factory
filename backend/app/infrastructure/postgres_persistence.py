@@ -301,7 +301,6 @@ class PostgresPersistenceTransaction(
                 if row is None:
                     raise LeaseOwnershipLost(f"lease ownership lost: {job_id}")
             self._connection.commit()
-            self._lease_checks.clear()
         except Exception:
             self._connection.rollback()
             self._lease_checks.clear()
