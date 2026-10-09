@@ -112,3 +112,36 @@ def test_postgres_queue_claim_preserves_provider_poll_identity():
     assert message.provider == "provider-a"
     assert message.operation_id == "operation-a"
     assert message.generation == 4
+
+
+def test_postgres_queue_rejects_ack_and_release_after_lease_expiry():
+    _prepare()
+    queue = _queue()
+    queued = queue.enqueue("postgres-queue-job")
+    now = datetime.now(timezone.utc)
+    message = queue.claim_next("worker-a", now, timedelta(minutes=5))
+    assert message is not None and message.message_id == queued.message_id
+
+    with psycopg.connect(os.environ["DATABASE_URL"]) as connection:
+        connection.execute(
+            """
+            UPDATE generation_work_items
+            SET claimed_until = now() - interval '1 second'
+            WHERE message_id = %s
+            """,
+            (message.message_id,),
+        )
+
+    with pytest.raises(ValueError, match="stale or unowned"):
+        queue.ack(message)
+    with pytest.raises(ValueError, match="stale or unowned"):
+        queue.release_or_requeue(message)
+
+    # Expired work remains recoverable; reclaiming fences out the old token.
+    reclaimed = queue.claim_next(
+        "worker-b", now + timedelta(minutes=6), timedelta(minutes=1)
+    )
+    assert reclaimed is not None
+    assert reclaimed.message_id == message.message_id
+    assert reclaimed.claim_token != message.claim_token
+    queue.ack(reclaimed)
