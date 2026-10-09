@@ -254,3 +254,89 @@ def test_async_worker_recovers_after_commit_before_ack_using_postgres():
     assert ("JOB_EXECUTION", "ACKED") in work_states
     assert ("PROVIDER_POLL", "ACKED") in work_states
     assert [row[0] for row in attempts] == ["RUNNING", "SUCCEEDED"]
+
+
+
+class LeaseExpiringProvider(RestartProvider):
+    def __init__(self, database_url: str, job_id: str):
+        super().__init__()
+        self.database_url = database_url
+        self.job_id = job_id
+
+    def get_status(self, operation: ProviderOperation) -> ProviderOperationStatusResult:
+        # Expire the worker lease while the provider call is in flight. The
+        # operation observation and next-poll intent must not commit afterward.
+        with psycopg.connect(self.database_url) as connection:
+            connection.execute(
+                """
+                UPDATE generation_worker_leases
+                SET acquired_at = clock_timestamp() - interval '2 seconds',
+                    expires_at = clock_timestamp() - interval '1 second'
+                WHERE job_id = %s
+                """,
+                (self.job_id,),
+            )
+        return super().get_status(operation)
+
+
+def test_poll_transaction_is_fenced_if_worker_lease_expires_during_provider_call():
+    database_url = os.environ.get("DATABASE_URL")
+    if not database_url:
+        pytest.skip("DATABASE_URL is required for PostgreSQL integration tests")
+
+    job_id = "worker-lease-fence-" + uuid4().hex
+    now = datetime.now(timezone.utc)
+    with psycopg.connect(database_url) as connection:
+        connection.execute(MIGRATION.read_text(encoding="utf-8"))
+        connection.execute(
+            """
+            INSERT INTO generation_jobs (job_id, capability, idempotency_key, status)
+            VALUES (%s, 'video', %s, 'QUEUED')
+            """,
+            (job_id, job_id + "-key"),
+        )
+
+    queue = PostgresGenerationJobQueue(lambda: psycopg.connect(database_url))
+    leases = PostgresWorkerLeaseRepository(lambda: psycopg.connect(database_url))
+    provider = LeaseExpiringProvider(database_url, job_id)
+    worker = ExecuteAsyncProviderDelivery(
+        queue=queue,
+        leases=leases,
+        transaction_factory=PostgresPersistenceTransactionFactory(
+            lambda: psycopg.connect(database_url)
+        ),
+        providers=ProviderResolver(provider),
+        contracts=ContractResolver(),
+        lease_duration=timedelta(minutes=2),
+        poll_delay=timedelta(seconds=5),
+    )
+
+    queue.enqueue(job_id)
+    message = queue.claim_next("lease-fence-worker", now, timedelta(minutes=1))
+    assert message is not None
+
+    result = worker.handle(message, "lease-fence-worker", now, {"prompt": "fence test"})
+    assert result.status is WorkerDeliveryStatus.REQUEUED
+    assert provider.submissions == 1
+    assert provider.polls == 1
+
+    with psycopg.connect(database_url) as connection:
+        operation = connection.execute(
+            """
+            SELECT status, poll_generation FROM provider_operations
+            WHERE provider = %s AND idempotency_key = %s
+            """,
+            (provider.provider_name, job_id + "-key"),
+        ).fetchone()
+        poll_intents = connection.execute(
+            """
+            SELECT count(*) FROM generation_work_items
+            WHERE job_id = %s AND intent_kind = 'PROVIDER_POLL'
+            """,
+            (job_id,),
+        ).fetchone()[0]
+
+    # Provider status was observed, but lease expiry fenced the durable poll
+    # transition, leaving the operation safely replayable from its prior state.
+    assert operation == ("SUBMITTED", 0)
+    assert poll_intents == 0
