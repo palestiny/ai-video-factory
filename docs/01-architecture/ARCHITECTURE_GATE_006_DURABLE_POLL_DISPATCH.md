@@ -12,7 +12,7 @@ Specify the correctness contract for scheduling future provider-status checks so
 
 ## Failure window being closed
 
-The current async worker persists provider-operation state and then calls `enqueue_after(job_id, delay)`. A crash between these operations can strand a non-terminal operation. A crash after scheduling but before acknowledging the source delivery can also create duplicate messages. The production design must durably record the next work intent in the same database transaction as the state transition that requires it, then tolerate at-least-once delivery.
+The original crash window was operation-state commit followed by `enqueue_after(job_id, delay)`. The async worker has since been changed to ask the lifecycle to persist the next poll intent in the same execution transaction, and to ACK the source message only after commit. The remaining proof obligation is a production PostgreSQL transaction adapter and real-PostgreSQL atomicity/concurrency testing.
 
 ## Required invariants
 
@@ -43,12 +43,12 @@ The initial schema is not proof of the above semantics. The adapter must define 
 ## Verified implementation findings (2026-10-09)
 
 - The async worker calls `ProviderOperationLifecycle.poll(operation)`, and that lifecycle method saves the observed operation and commits its transaction internally.
-- The worker then calls `enqueue_after(job_id, poll_delay)` only after that commit. This confirms the crash window is real in the current call graph, not merely a theoretical queue concern.
+- The prior worker call graph had a commit-then-enqueue crash window. The current implementation removes the separate enqueue step for provider polls by writing the poll intent inside the lifecycle transaction.
 - `ProviderOperation` defines a persisted `poll_generation` field (default `0`, non-negative, with a PostgreSQL column/check constraint). The lifecycle now advances it only for non-terminal observations when scheduling is requested, and inserts the matching generation-specific `WorkIntent` before committing. Queue messages carry intent kind/key and provider-operation generation; stale-generation deliveries return the authoritative operation without another provider poll.
 - The execution transaction port now includes a `WorkIntentRepository` contract. `WorkIntent` defines a stable provider-poll key based on provider, operation ID, and generation; the in-memory repository is idempotent for identical intents and rejects identity reuse with different contents.
 - The in-memory transaction snapshot now includes work intents, and focused unit tests cover stable identity, idempotent insertion, identity conflict, timezone-aware due times, and rollback. This is deterministic contract testing, **not evidence of PostgreSQL atomicity**.
-- The migration now stores `intent_kind`, `provider`, `operation_id`, and `generation` alongside the queue row, validates complete positive provider-poll identity, and has a partial unique index on `(provider, operation_id, generation)` for provider-poll intents. This is schema-level groundwork; adapter mapping and lifecycle integration remain unimplemented. The migration also enforces a unique nonblank `intent_key` and lease metadata consistency.
-- GitHub Actions run #336 passed after the `poll_generation` schema test was corrected. The work-intent unit-test runs for commit `cf06b553` also passed. The newest PostgreSQL schema changes have new CI runs queued/in progress at the time of this update; do not count those tests as passing until the run for the latest commit concludes successfully. Passing schema tests would still not prove the PostgreSQL queue adapter, transaction atomicity, concurrency, fencing, or crash recovery.
+- The migration now stores `intent_kind`, `provider`, `operation_id`, and `generation` alongside the queue row, validates complete positive provider-poll identity, and has a partial unique index on `(provider, operation_id, generation)` for provider-poll intents. This is schema-level groundwork now mapped by `PostgresWorkIntentRepository`; complete PostgreSQL operation-state transaction composition and concurrency proof remain outstanding. The migration also enforces a unique nonblank `intent_key` and lease metadata consistency.
+- GitHub Actions run #336 passed after the `poll_generation` schema test was corrected. The work-intent unit-test runs for commit `cf06b553` also passed. Passing schema and queue adapter tests still do not prove operation-state/work-intent atomicity, concurrent status monotonicity, or end-to-end crash recovery.
 
 ## Required flow
 
@@ -81,13 +81,13 @@ The initial schema is not proof of the above semantics. The adapter must define 
 
 ## Remaining gaps
 
-- The current `GenerationJobQueue` port still exposes `enqueue_after(job_id, delay)` and does not carry a stable intent key or poll generation, although queue delivery now includes an optional fencing token.
+- The generic queue port still exposes `enqueue_after(job_id, delay)` for independent job execution. Provider poll scheduling instead uses `WorkIntentRepository` inside the operation-state transaction. Claimed `QueueMessage` objects carry stable intent metadata and a claim token.
 - The async worker no longer separately publishes the next provider poll. It relies on the lifecycle transaction to commit the state and intent together, then ACKs the source message.
 - `ProviderOperationLifecycle.poll` still owns its commit boundary, but now stages the provider operation and next poll intent on the same `ExecutionPersistenceTransaction` before committing. A production PostgreSQL execution-transaction adapter must prove both repositories share one connection and transaction.
 - Poll generation advancement and intent insertion are implemented at the application transaction boundary and covered by in-memory rollback/replay tests. PostgreSQL concurrency protection still needs an operation-state adapter with conditional update/locking semantics and a real-PostgreSQL race test; stable intent uniqueness alone does not prove terminal-state monotonicity under concurrent status observations.
-- The work-intent contract and in-memory repository are now present, but they are not yet wired into poll lifecycle execution.
-- A transaction-scoped `PostgresWorkIntentRepository` has been added. It uses the caller-owned psycopg connection, inserts queue rows without committing, and verifies duplicate stable keys against stored intent contents. Its focused PostgreSQL integration tests passed in CI run #362.
-- `PostgresGenerationJobQueue` has been added with atomic due-work claiming via `FOR UPDATE SKIP LOCKED`, expiring claim tokens, re-claim attempt increments, and token-fenced ACK/release. `QueueMessage` carries the claim token plus stable intent metadata. PostgreSQL integration tests cover normal claim/ACK, expired-claim recovery, stale-ACK rejection, and delayed work; a further test now verifies poll metadata survives queue claiming and is awaiting CI. The adapter is not yet wired into a complete production composition root.
+- The work-intent contract is wired into `ProviderOperationLifecycle.poll`; unit tests cover transactional rollback/replay behavior. The production PostgreSQL operation repository and shared transaction factory remain missing.
+- A transaction-scoped `PostgresWorkIntentRepository` uses a caller-owned psycopg connection, does not commit independently, and verifies duplicate stable keys against stored intent contents. PostgreSQL integration tests cover insertion, idempotency, conflicting contents, and rollback.
+- `PostgresGenerationJobQueue` has been added with atomic due-work claiming via `FOR UPDATE SKIP LOCKED`, expiring claim tokens, re-claim attempt increments, and token-fenced ACK/release. `QueueMessage` carries the claim token plus stable intent metadata. PostgreSQL integration tests cover normal claim/ACK, expired-claim recovery, stale-token rejection, delayed work, and provider-poll metadata preservation. Expired claims are reclaimable with a fresh token. The queue adapter is not yet wired into a complete production composition root.
 - The migration smoke test verifies schema application and selected constraints only; it does not prove atomicity, concurrency, fencing, or crash recovery.
 - Webhook-triggered immediate checks must eventually use the same durable intent contract rather than a separate scheduling path.
 
