@@ -377,6 +377,7 @@ def test_postgres_cancellation_wins_if_it_commits_during_provider_poll():
     job_id = "worker-cancel-race-" + uuid4().hex
     with psycopg.connect(database_url) as connection:
         connection.execute(MIGRATION.read_text(encoding="utf-8"))
+        connection.execute("DELETE FROM generation_work_items WHERE state IN ('PENDING', 'CLAIMED')")
         connection.execute(
             """
             INSERT INTO generation_jobs (job_id, capability, idempotency_key, status)
@@ -404,6 +405,7 @@ def test_postgres_cancellation_wins_if_it_commits_during_provider_poll():
     now = datetime.now(timezone.utc) + timedelta(seconds=1)
     message = queue.claim_next("cancel-race-worker", now, timedelta(minutes=1))
     assert message is not None
+    assert message.job_id == job_id
 
     result = worker.handle(message, "cancel-race-worker", now, {"prompt": "cancel race"})
     assert result.status is WorkerDeliveryStatus.ACKED
