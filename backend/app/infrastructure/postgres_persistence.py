@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime
-from typing import Any
-
 from psycopg import Connection
 from psycopg.types.json import Jsonb
 
@@ -23,7 +20,7 @@ from app.application.persistence import (
 )
 from app.application.provider_operation_repository import ProviderOperationRepository
 from app.application.work_intent import WorkIntentRepository
-from app.domain.events import JobEvent, JobEventType
+from app.domain.events import JobEvent
 from app.domain.generation import (
     AttemptStatus,
     GenerationAttempt,
@@ -61,6 +58,7 @@ class PostgresGenerationJobRepository(GenerationJobRepository):
             """
             SELECT job_id, capability, idempotency_key, status, attempt_count, failure_code
             FROM generation_jobs WHERE job_id = %s
+            FOR UPDATE
             """,
             (job_id,),
         ).fetchone()
