@@ -2,7 +2,7 @@
 
 **Status: DESIGN CONTRACT RETAINED — implementation must follow approved Gate 007.**
 
-Gate 007 selected PostgreSQL plus a PostgreSQL-backed delayed work queue on 2026-10-09. The async worker now asks the provider-operation lifecycle to persist the next poll intent in the same transaction as the provider status update, and ACKs only after that transaction succeeds. This is implemented and covered by in-memory transaction tests, but the complete PostgreSQL persistence composition and real-PostgreSQL operation-state/intent atomicity test are still missing; Gate 006 has **not** passed.
+Gate 007 selected PostgreSQL plus a PostgreSQL-backed delayed work queue on 2026-10-09. The PostgreSQL persistence composition now binds jobs, attempt history, events, idempotency reservations, provider operations, and work intents to one caller-owned connection. Real-PostgreSQL tests cover atomic commit/rollback and execution-lease fencing; CI run [#551](https://github.com/palestiny/ai-video-factory/actions/runs/37905479770) passed. Gate 006 has **not** passed: full provider-worker process restart/reconciliation and the remaining lifecycle invariants still need end-to-end evidence.
 
 Decision record: [Architecture Gate 007 — Persistence and Durable Scheduling Decision](ARCHITECTURE_GATE_007_PERSISTENCE_AND_SCHEDULING_DECISION.md).
 
@@ -12,7 +12,7 @@ Specify the correctness contract for scheduling future provider-status checks so
 
 ## Failure window being closed
 
-The original crash window was operation-state commit followed by `enqueue_after(job_id, delay)`. The async worker has since been changed to ask the lifecycle to persist the next poll intent in the same execution transaction, and to ACK the source message only after commit. The remaining proof obligation is a production PostgreSQL transaction adapter and real-PostgreSQL atomicity/concurrency testing.
+The original crash window was operation-state commit followed by `enqueue_after(job_id, delay)`. Provider poll state and its next durable work intent now share the same PostgreSQL transaction. Queue delivery claims and per-job execution leases are separate fencing layers: the former guards ACK/release; the latter guards state persistence and is revalidated at transaction commit. Remaining proof obligations focus on full worker restart/reconciliation and lifecycle edge cases.
 
 ## Required invariants
 
@@ -47,7 +47,7 @@ The initial schema is not proof of the above semantics. The adapter must define 
 - `ProviderOperation` defines a persisted `poll_generation` field (default `0`, non-negative, with a PostgreSQL column/check constraint). The lifecycle now advances it only for non-terminal observations when scheduling is requested, and inserts the matching generation-specific `WorkIntent` before committing. Queue messages carry intent kind/key and provider-operation generation; stale-generation deliveries return the authoritative operation without another provider poll.
 - The execution transaction port now includes a `WorkIntentRepository` contract. `WorkIntent` defines a stable provider-poll key based on provider, operation ID, and generation; the in-memory repository is idempotent for identical intents and rejects identity reuse with different contents.
 - The in-memory transaction snapshot now includes work intents, and focused unit tests cover stable identity, idempotent insertion, identity conflict, timezone-aware due times, and rollback. This is deterministic contract testing, **not evidence of PostgreSQL atomicity**.
-- The migration now stores `intent_kind`, `provider`, `operation_id`, and `generation` alongside the queue row, validates complete positive provider-poll identity, and has a partial unique index on `(provider, operation_id, generation)` for provider-poll intents. This is schema-level groundwork now mapped by `PostgresWorkIntentRepository`; complete PostgreSQL operation-state transaction composition and concurrency proof remain outstanding. The migration also enforces a unique nonblank `intent_key` and lease metadata consistency.
+- The migration stores `intent_kind`, `provider`, `operation_id`, and `generation` alongside queue rows, validates complete positive provider-poll identity, and enforces a partial unique index on `(provider, operation_id, generation)`. `PostgresWorkIntentRepository` and `PostgresProviderOperationRepository` share the transaction connection through `PostgresPersistenceTransaction`. The migration also defines `generation_worker_leases`; commit-time lease revalidation fences state writes after lease expiry.
 - GitHub Actions run #336 passed after the `poll_generation` schema test was corrected. The work-intent unit-test runs for commit `cf06b553` also passed. Passing schema and queue adapter tests still do not prove operation-state/work-intent atomicity, concurrent status monotonicity, or end-to-end crash recovery.
 
 ## Required flow
@@ -80,7 +80,7 @@ The initial schema is not proof of the above semantics. The adapter must define 
 14. Queue age, delivery attempts, and retry/dead-letter state are observable.
 
 - `ProviderOperation` now carries a non-negative optimistic `version`; lifecycle polling advances it with each accepted observation. The PostgreSQL provider-operation adapter uses compare-and-swap updates against the previous version and rejects stale concurrent writers. Terminal rows cannot be changed to a different status by a stale write.
-- `PostgresProviderOperationRepository` and `PostgresWorkIntentRepository` are caller-connection adapters that do not commit independently. New PostgreSQL integration tests exercise operation/result round-trip, operation-state + poll-intent commit/rollback on one connection, and a two-connection stale-write race. The first CI run exposed one existing unit test that did not advance the new version token when saving; that test has been corrected. Backend Tests run [#429](https://github.com/palestiny/ai-video-factory/actions/runs/37863399866) passed on commit `bf13b9b678a12fa24373da6a957a854ffd00752e`, including the new PostgreSQL operation-state/work-intent atomicity and stale-write tests.
+- `PostgresProviderOperationRepository` and `PostgresWorkIntentRepository` are caller-connection adapters that do not commit independently. `PostgresPersistenceTransaction` composes these with job, attempt, event, and idempotency adapters over the same connection. PostgreSQL integration tests cover all-staged-writes rollback/commit, idempotency-before-job insertion with a deferred FK, active/expired lease rejection, and revalidation when a lease expires before commit. Backend Tests run [#551](https://github.com/palestiny/ai-video-factory/actions/runs/37905479770) passed after the execution-lease SQL correction.
 
 ## PostgreSQL transaction composition update (2026-10-09)
 
