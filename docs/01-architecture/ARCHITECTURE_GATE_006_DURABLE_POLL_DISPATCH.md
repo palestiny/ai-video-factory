@@ -108,4 +108,4 @@ The initial schema is not proof of the above semantics. The adapter must define 
 
 ## Acceptance criteria
 
-Gate 006 remains **NOT PASSED** until production connection lifecycle/composition is implemented, the full async worker is exercised through a real PostgreSQL crash/restart scenario, and remaining terminal/stale-delivery invariants are verified under concurrency. Repository-level atomicity and lease tests have passed, but they are not by themselves proof of end-to-end worker recovery.
+Gate 006 remains **NOT PASSED** until the runtime entrypoint wires the configured connection factory and remaining terminal/stale-delivery invariants are verified under concurrent PostgreSQL workers. Repository-level atomicity, lease fencing, and the async-worker crash/restart integration test now pass, but the remaining invariants still need explicit evidence.
