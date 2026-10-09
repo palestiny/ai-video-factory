@@ -25,6 +25,12 @@ Retry policy considers:
 
 No unbounded retry loops.
 
+The PostgreSQL queue's delivery retry policy is bounded independently from the domain/provider retry policy:
+- Default maximum delivery attempts: 5.
+- Release/requeue uses exponential delay starting at 1 second, capped at 60 seconds.
+- A failed final delivery or an expired final claim moves the work item to `DEAD` with `MAX_DELIVERY_ATTEMPTS_EXCEEDED`.
+- Operators can inspect `delivery_attempt`, `last_error_code`, `state`, `created_at`, and `due_at` in `generation_work_items`. A user-facing metrics/alerting surface remains future work.
+
 ## Recovery
 
 A worker restart must not silently lose a running job.
