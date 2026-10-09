@@ -165,20 +165,18 @@ def test_composed_transaction_rollback_removes_all_staged_writes():
         ).fetchone() is None
 
 
-def test_transaction_validates_active_queue_claim_token_and_expiry():
+def test_transaction_validates_active_worker_lease_token_and_expiry():
     job_id, _, _, _ = _prepare()
-    message_id = uuid4()
     token = uuid4()
     with psycopg.connect(_database()) as connection:
         connection.execute(
             """
-            INSERT INTO generation_work_items
-                (message_id, job_id, intent_key, intent_kind, due_at, state,
-                 claim_token, claimed_by, claimed_until)
-            VALUES (%s, %s, %s, 'JOB_EXECUTION', now(), 'CLAIMED',
-                    %s, 'transaction-test-worker', now() + interval '2 minutes')
+            INSERT INTO generation_worker_leases
+                (job_id, worker_id, lease_token, acquired_at, expires_at)
+            VALUES (%s, 'transaction-test-worker', %s, clock_timestamp(),
+                    clock_timestamp() + interval '2 minutes')
             """,
-            (message_id, job_id, job_id + ":lease-test", token),
+            (job_id, token),
         )
 
     with psycopg.connect(_database()) as connection:
@@ -191,11 +189,11 @@ def test_transaction_validates_active_queue_claim_token_and_expiry():
     with psycopg.connect(_database()) as connection:
         connection.execute(
             """
-            UPDATE generation_work_items
-            SET claimed_until = now() - interval '1 second'
-            WHERE message_id = %s
+            UPDATE generation_worker_leases
+            SET expires_at = clock_timestamp() - interval '1 second'
+            WHERE job_id = %s
             """,
-            (message_id,),
+            (job_id,),
         )
 
     with psycopg.connect(_database()) as connection:
@@ -205,20 +203,18 @@ def test_transaction_validates_active_queue_claim_token_and_expiry():
         transaction.rollback()
 
 
-def test_transaction_rechecks_claim_lease_before_committing_writes():
+def test_transaction_rechecks_worker_lease_before_committing_writes():
     job_id, provider, operation_id, _ = _prepare()
-    message_id = uuid4()
     token = uuid4()
     with psycopg.connect(_database()) as connection:
         connection.execute(
             """
-            INSERT INTO generation_work_items
-                (message_id, job_id, intent_key, intent_kind, due_at, state,
-                 claim_token, claimed_by, claimed_until)
-            VALUES (%s, %s, %s, 'JOB_EXECUTION', now(), 'CLAIMED',
-                    %s, 'transaction-test-worker', now() + interval '2 minutes')
+            INSERT INTO generation_worker_leases
+                (job_id, worker_id, lease_token, acquired_at, expires_at)
+            VALUES (%s, 'transaction-test-worker', %s, clock_timestamp(),
+                    clock_timestamp() + interval '2 minutes')
             """,
-            (message_id, job_id, job_id + ":lease-commit-test", token),
+            (job_id, token),
         )
 
     with psycopg.connect(_database()) as connection:
@@ -230,16 +226,15 @@ def test_transaction_rechecks_claim_lease_before_committing_writes():
             replace(operation, status=ProviderOperationStatus.RUNNING, version=1)
         )
 
-        # Simulate expiry/reclaim while external work runs without holding the
-        # queue-row lock for the duration of that external call.
+        # The worker's lease expires while provider work is in progress.
         with psycopg.connect(_database()) as other:
             other.execute(
                 """
-                UPDATE generation_work_items
-                SET claimed_until = clock_timestamp() - interval '1 second'
-                WHERE message_id = %s
+                UPDATE generation_worker_leases
+                SET expires_at = clock_timestamp() - interval '1 second'
+                WHERE job_id = %s
                 """,
-                (message_id,),
+                (job_id,),
             )
 
         with pytest.raises(LeaseOwnershipLost):
