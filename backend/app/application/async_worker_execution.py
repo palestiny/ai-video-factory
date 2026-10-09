@@ -82,8 +82,15 @@ class ExecuteAsyncProviderDelivery:
                 message.job_id, "active lease held by another worker",
             )
 
+        transactions: list[ExecutionPersistenceTransaction] = []
+
+        def new_transaction() -> ExecutionPersistenceTransaction:
+            transaction = self._transaction_factory()
+            transactions.append(transaction)
+            return transaction
+
         try:
-            tx = self._transaction_factory()
+            tx = new_transaction()
             tx.assert_lease_owner(message.job_id, lease.lease_token)
             job = tx.jobs.get(message.job_id)
             if job is None:
@@ -319,7 +326,7 @@ class ExecuteAsyncProviderDelivery:
 
             # Re-read authoritative job state immediately before finalization so a
             # cancellation committed during provider execution cannot be resurrected.
-            finalize_tx = self._transaction_factory()
+            finalize_tx = new_transaction()
             finalize_tx.assert_lease_owner(message.job_id, lease.lease_token)
             current_job = finalize_tx.jobs.get(message.job_id)
             if current_job is None:
@@ -439,7 +446,12 @@ class ExecuteAsyncProviderDelivery:
                 "async provider delivery failed; durable operation will be replayed",
             )
         finally:
-            self._leases.release(message.job_id, lease.lease_token)
+            try:
+                for transaction in reversed(transactions):
+                    if hasattr(transaction, "close"):
+                        transaction.close()
+            finally:
+                self._leases.release(message.job_id, lease.lease_token)
 
     @staticmethod
     def _result(
