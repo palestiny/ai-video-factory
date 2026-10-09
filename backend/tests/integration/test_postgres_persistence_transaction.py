@@ -184,7 +184,7 @@ def test_transaction_validates_active_lease_token_and_expiry():
         with pytest.raises(LeaseOwnershipLost):
             transaction.assert_lease_owner(job_id, str(uuid4()))
         connection.execute(
-            "UPDATE generation_worker_leases SET expires_at = now() - interval '1 second' WHERE job_id = %s",
+            "UPDATE generation_worker_leases SET acquired_at = now() - interval '5 minutes', expires_at = now() - interval '1 second' WHERE job_id = %s",
             (job_id,),
         )
         with pytest.raises(LeaseOwnershipLost):
