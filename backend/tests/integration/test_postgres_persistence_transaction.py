@@ -189,7 +189,7 @@ def test_transaction_validates_active_lease_token_and_expiry():
             (message_id,),
         )
         with pytest.raises(LeaseOwnershipLost):
-            transaction.assert_lease_owner(job_id, str(token))
+            transaction.commit()
 
 
 def test_idempotency_reservation_can_precede_job_insert_in_same_transaction():
