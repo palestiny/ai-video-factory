@@ -232,10 +232,9 @@ def test_transaction_rechecks_worker_lease_before_committing_writes():
         with psycopg.connect(_database()) as other:
             other.execute(
                 """
-                UPDATE generation_worker_leases
-            SET acquired_at = clock_timestamp() - interval '2 seconds',
-                expires_at = clock_timestamp() - interval '1 second'
-            WHERE job_id = %s
+                UPDATE generation_work_items
+            SET claimed_until = clock_timestamp() - interval '1 second'
+            WHERE job_id = %s AND state = 'CLAIMED'
             """,
             (job_id,),
             )
