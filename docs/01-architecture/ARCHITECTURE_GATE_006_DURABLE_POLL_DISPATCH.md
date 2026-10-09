@@ -102,6 +102,8 @@ The initial schema is not proof of the above semantics. The adapter must define 
 
 - Backend Tests run [#579](https://github.com/palestiny/ai-video-factory/actions/runs/37908327287) passed with **171 passed** after adding `build_postgres_async_worker`. The helper requires an explicit `database_url` or `DATABASE_URL`, and wires the PostgreSQL queue, worker-lease repository, and managed persistence-transaction factory without selecting a hosting vendor. Unit tests cover missing configuration and invalid durations. This is reusable runtime composition, not yet a long-running process entrypoint or deployment configuration.
 
+- Backend Tests run [#587](https://github.com/palestiny/ai-video-factory/actions/runs/37908648773) passed with **173 passed** after implementing bounded PostgreSQL queue delivery retries. Default policy is 5 delivery attempts with exponential requeue delay from 1 second up to 60 seconds. A failed final release or an expired final claim moves the item to `DEAD` with `MAX_DELIVERY_ATTEMPTS_EXCEEDED`; integration tests cover both exhaustion paths. This bounds queue delivery retries; domain/provider retry policy and operational alerting remain separate concerns.
+
 ## Remaining gaps
 
 - Worker transaction connection ownership is handled by an injected factory and delivery-finally cleanup. `build_postgres_async_worker` now builds the PostgreSQL queue, lease repository, and transaction factory from `database_url`/`DATABASE_URL`. Still open: a long-running process entrypoint, service shutdown/health lifecycle, and deployment configuration. No cloud vendor or connection pool implementation is selected.
