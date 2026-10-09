@@ -1,0 +1,162 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from uuid import uuid4, uuid5, NAMESPACE_URL
+
+from app.application.work_intent import WorkIntent
+
+from app.application.worker import QueueMessage, WorkerLease
+
+
+@dataclass(frozen=True)
+class QueuedMessage:
+    message: QueueMessage
+    available_at: datetime
+
+
+class InMemoryGenerationJobQueue:
+    """Deterministic queue double; delivery is intentionally at-least-once."""
+
+    def __init__(self, work_intents: dict[str, WorkIntent] | None = None) -> None:
+        self._messages: dict[str, QueuedMessage] = {}
+        self._acked: set[str] = set()
+        self._work_intents = work_intents
+        self._intent_messages: dict[str, str] = {}
+
+    def enqueue(self, job_id: str) -> QueueMessage:
+        return self.enqueue_after(job_id, timedelta(0))
+
+    def enqueue_after(self, job_id: str, delay: timedelta) -> QueueMessage:
+        if not job_id.strip():
+            raise ValueError("job_id cannot be blank")
+        if delay < timedelta(0):
+            raise ValueError("delay cannot be negative")
+        message = QueueMessage(message_id=str(uuid4()), job_id=job_id)
+        self._messages[message.message_id] = QueuedMessage(message, datetime.now().astimezone() + delay)
+        return message
+
+    def ack(self, message: QueueMessage) -> None:
+        self._acked.add(message.message_id)
+
+    def release_or_requeue(self, message: QueueMessage) -> None:
+        if message.message_id in self._acked:
+            return
+        redelivery = QueueMessage(
+            message_id=str(uuid4()),
+            job_id=message.job_id,
+            delivery_attempt=message.delivery_attempt + 1,
+            intent_key=message.intent_key,
+            intent_kind=message.intent_kind,
+            provider=message.provider,
+            operation_id=message.operation_id,
+            generation=message.generation,
+        )
+        self._messages[redelivery.message_id] = QueuedMessage(
+            redelivery,
+            datetime.now().astimezone(),
+        )
+
+    def _sync_work_intents(self) -> None:
+        if self._work_intents is None:
+            return
+        for intent_key, intent in self._work_intents.items():
+            if intent_key in self._intent_messages:
+                continue
+            message_id = str(uuid5(NAMESPACE_URL, intent_key))
+            message = QueueMessage(
+                message_id=message_id,
+                job_id=intent.job_id,
+                intent_key=intent.intent_key,
+                intent_kind=intent.kind,
+                provider=intent.provider,
+                operation_id=intent.operation_id,
+                generation=intent.generation,
+            )
+            self._messages[message_id] = QueuedMessage(message, intent.due_at)
+            self._intent_messages[intent_key] = message_id
+
+    def is_acked(self, message_id: str) -> bool:
+        return message_id in self._acked
+
+    def pending(self) -> tuple[QueueMessage, ...]:
+        self._sync_work_intents()
+        return tuple(
+            item.message
+            for item in self._messages.values()
+            if item.message.message_id not in self._acked
+        )
+
+
+class InMemoryWorkerLeaseRepository:
+    """Deterministic lease store; claim is single-owner by job."""
+
+    def __init__(self) -> None:
+        self._leases: dict[str, WorkerLease] = {}
+
+    def claim(
+        self,
+        job_id: str,
+        worker_id: str,
+        now: datetime,
+        lease_duration: timedelta,
+    ) -> WorkerLease | None:
+        if lease_duration <= timedelta(0):
+            raise ValueError("lease_duration must be positive")
+        current = self._leases.get(job_id)
+        if current is not None and current.expires_at > now:
+            return None
+
+        lease = WorkerLease(
+            job_id=job_id,
+            worker_id=worker_id,
+            lease_token=str(uuid4()),
+            acquired_at=now,
+            expires_at=now + lease_duration,
+        )
+        self._leases[job_id] = lease
+        return lease
+
+    def renew(
+        self,
+        job_id: str,
+        lease_token: str,
+        now: datetime,
+        lease_duration: timedelta,
+    ) -> WorkerLease | None:
+        if lease_duration <= timedelta(0):
+            raise ValueError("lease_duration must be positive")
+        current = self._leases.get(job_id)
+        if (
+            current is None
+            or current.lease_token != lease_token
+            or current.expires_at <= now
+        ):
+            return None
+
+        renewed = WorkerLease(
+            job_id=job_id,
+            worker_id=current.worker_id,
+            lease_token=current.lease_token,
+            acquired_at=current.acquired_at,
+            expires_at=now + lease_duration,
+        )
+        self._leases[job_id] = renewed
+        return renewed
+
+    def release(self, job_id: str, lease_token: str) -> bool:
+        current = self._leases.get(job_id)
+        if current is None or current.lease_token != lease_token:
+            return False
+        del self._leases[job_id]
+        return True
+
+    def recover_expired(self, job_id: str, now: datetime) -> bool:
+        current = self._leases.get(job_id)
+        if current is None or current.expires_at > now:
+            return False
+        del self._leases[job_id]
+        return True
+
+    def current(self, job_id: str) -> WorkerLease | None:
+        return self._leases.get(job_id)

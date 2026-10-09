@@ -1,0 +1,21 @@
+[project]
+name = "ai-video-factory"
+version = "0.1.0"
+description = "Provider-neutral AI video production orchestration platform"
+requires-python = ">=3.12"
+dependencies = [
+  "psycopg[binary]>=3.2,<4"
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "ruff>=0.6"
+]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+exclude = ["tests*", "migrations*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

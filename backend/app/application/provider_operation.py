@@ -1,0 +1,68 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Mapping
+
+
+class ProviderOperationStatus(str, Enum):
+    SUBMITTED = "SUBMITTED"
+    RUNNING = "RUNNING"
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
+    UNKNOWN = "UNKNOWN"
+
+
+class ProviderCancellationStatus(str, Enum):
+    ACCEPTED = "ACCEPTED"
+    ALREADY_TERMINAL = "ALREADY_TERMINAL"
+    UNSUPPORTED = "UNSUPPORTED"
+    UNKNOWN = "UNKNOWN"
+
+
+@dataclass(frozen=True)
+class ProviderOperation:
+    provider: str
+    operation_id: str
+    idempotency_key: str
+    capability: str
+    status: ProviderOperationStatus = ProviderOperationStatus.SUBMITTED
+    submitted_at: str | None = None
+    terminal_result: object | None = None
+    failure_code: str | None = None
+    diagnostics: Mapping[str, object] = field(default_factory=dict)
+    # Generation of the next durable poll intent. It must be advanced in the
+    # same transaction that inserts that intent; this field alone is not a queue.
+    poll_generation: int = 0
+    # Optimistic concurrency token for durable state transitions.
+    version: int = 0
+
+    def __post_init__(self) -> None:
+        if not self.provider.strip():
+            raise ValueError("provider cannot be blank")
+        if not self.operation_id.strip():
+            raise ValueError("operation_id cannot be blank")
+        if not self.idempotency_key.strip():
+            raise ValueError("idempotency_key cannot be blank")
+        if not self.capability.strip():
+            raise ValueError("capability cannot be blank")
+        if self.poll_generation < 0:
+            raise ValueError("poll_generation cannot be negative")
+        if self.version < 0:
+            raise ValueError("version cannot be negative")
+
+
+@dataclass(frozen=True)
+class ProviderOperationStatusResult:
+    operation: ProviderOperation
+    status: ProviderOperationStatus
+    result: object | None = None
+    failure_code: str | None = None
+    diagnostics: Mapping[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ProviderCancellationResult:
+    status: ProviderCancellationStatus
+    diagnostics: Mapping[str, object] = field(default_factory=dict)
