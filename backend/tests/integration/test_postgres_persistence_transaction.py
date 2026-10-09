@@ -211,12 +211,14 @@ def test_transaction_rechecks_worker_lease_before_committing_writes():
     with psycopg.connect(_database()) as connection:
         connection.execute(
             """
-            INSERT INTO generation_worker_leases
-                (job_id, worker_id, lease_token, acquired_at, expires_at)
-            VALUES (%s, 'transaction-test-worker', %s, clock_timestamp(),
+            INSERT INTO generation_work_items
+                (message_id, job_id, intent_key, intent_kind, due_at, state,
+                 claim_token, claimed_by, claimed_until)
+            VALUES (%s, %s, %s, 'JOB_EXECUTION', clock_timestamp(),
+                    'CLAIMED', %s, 'transaction-test-worker',
                     clock_timestamp() + interval '2 minutes')
             """,
-            (job_id, token),
+            (str(uuid4()), job_id, job_id + ":lease-commit-check", token),
         )
 
     with psycopg.connect(_database()) as connection:
