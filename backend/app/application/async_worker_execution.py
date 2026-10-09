@@ -276,6 +276,9 @@ class ExecuteAsyncProviderDelivery:
                 lifecycle = ProviderOperationLifecycle(
                     tx, provider, provider_name, contract
                 )
+                # Earlier commits clear transaction-local lease checks. Re-register
+                # ownership for the submit transaction so commit revalidates it.
+                tx.assert_lease_owner(message.job_id, lease.lease_token)
                 try:
                     operation = lifecycle.submit(request)
                 except Exception:
@@ -290,6 +293,9 @@ class ExecuteAsyncProviderDelivery:
                 )
 
             if operation.status not in self._TERMINAL:
+                # Submission may have committed and cleared prior lease checks.
+                # Fence the poll-state + next-intent transaction independently.
+                tx.assert_lease_owner(message.job_id, lease.lease_token)
                 try:
                     expected_generation = (
                         message.generation
