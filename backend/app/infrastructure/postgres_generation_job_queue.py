@@ -18,8 +18,22 @@ class PostgresGenerationJobQueue(GenerationJobQueue):
     connection instead of calling enqueue/enqueue_after.
     """
 
-    def __init__(self, connection_factory: Callable[[], Connection]) -> None:
+    def __init__(
+        self,
+        connection_factory: Callable[[], Connection],
+        *,
+        max_delivery_attempts: int = 5,
+        retry_base_delay: timedelta = timedelta(seconds=1),
+        max_retry_delay: timedelta = timedelta(minutes=1),
+    ) -> None:
+        if max_delivery_attempts < 1:
+            raise ValueError("max_delivery_attempts must be at least 1")
+        if retry_base_delay < timedelta(0) or max_retry_delay < timedelta(0):
+            raise ValueError("retry delays cannot be negative")
         self._connection_factory = connection_factory
+        self._max_delivery_attempts = max_delivery_attempts
+        self._retry_base_delay = retry_base_delay
+        self._max_retry_delay = max_retry_delay
 
     def enqueue(self, job_id: str) -> QueueMessage:
         return self.enqueue_after(job_id, timedelta(0))
@@ -56,6 +70,20 @@ class PostgresGenerationJobQueue(GenerationJobQueue):
             raise ValueError("lease_duration must be positive")
         token = uuid4()
         with self._connection_factory() as connection:
+            # An expired final attempt must become visible as DEAD instead of
+            # being reclaimed forever after repeated process crashes.
+            connection.execute(
+                """
+                UPDATE generation_work_items
+                SET state = 'DEAD',
+                    claim_token = NULL, claimed_by = NULL, claimed_until = NULL,
+                    last_error_code = 'MAX_DELIVERY_ATTEMPTS_EXCEEDED'
+                WHERE state = 'CLAIMED'
+                  AND claimed_until <= %s
+                  AND delivery_attempt >= %s
+                """,
+                (now, self._max_delivery_attempts),
+            )
             row = connection.execute(
                 """
                 WITH candidate AS (
@@ -63,7 +91,8 @@ class PostgresGenerationJobQueue(GenerationJobQueue):
                     FROM generation_work_items
                     WHERE due_at <= %s
                       AND (state = 'PENDING'
-                           OR (state = 'CLAIMED' AND claimed_until <= %s))
+                           OR (state = 'CLAIMED' AND claimed_until <= %s
+                               AND delivery_attempt < %s))
                     ORDER BY due_at, created_at, message_id
                     FOR UPDATE SKIP LOCKED
                     LIMIT 1
@@ -87,7 +116,7 @@ class PostgresGenerationJobQueue(GenerationJobQueue):
                           item.intent_key, item.intent_kind, item.provider,
                           item.operation_id, item.generation
                 """,
-                (now, now, token, worker_id, now, lease_duration),
+                (now, now, self._max_delivery_attempts, token, worker_id, now, lease_duration),
             ).fetchone()
         if row is None:
             return None
@@ -115,19 +144,45 @@ class PostgresGenerationJobQueue(GenerationJobQueue):
 
     def release_or_requeue(self, message: QueueMessage) -> None:
         token = self._required_token(message)
+        exponent = min(max(message.delivery_attempt - 1, 0), 30)
+        delay_seconds = min(
+            self._retry_base_delay.total_seconds() * (2 ** exponent),
+            self._max_retry_delay.total_seconds(),
+        )
         with self._connection_factory() as connection:
             updated = connection.execute(
                 """
                 UPDATE generation_work_items
-                SET state = 'PENDING', due_at = now(),
-                    delivery_attempt = delivery_attempt + 1,
+                SET state = CASE
+                        WHEN delivery_attempt >= %s THEN 'DEAD'
+                        ELSE 'PENDING'
+                    END,
+                    due_at = CASE
+                        WHEN delivery_attempt >= %s THEN due_at
+                        ELSE now() + (%s * interval '1 second')
+                    END,
+                    delivery_attempt = CASE
+                        WHEN delivery_attempt >= %s THEN delivery_attempt
+                        ELSE delivery_attempt + 1
+                    END,
                     claim_token = NULL, claimed_by = NULL, claimed_until = NULL,
-                    last_error_code = 'DELIVERY_RELEASED'
+                    last_error_code = CASE
+                        WHEN delivery_attempt >= %s THEN 'MAX_DELIVERY_ATTEMPTS_EXCEEDED'
+                        ELSE 'DELIVERY_RELEASED'
+                    END
                 WHERE message_id = %s AND state = 'CLAIMED' AND claim_token = %s
                   AND claimed_until > now()
                 RETURNING message_id
                 """,
-                (message.message_id, token),
+                (
+                    self._max_delivery_attempts,
+                    self._max_delivery_attempts,
+                    delay_seconds,
+                    self._max_delivery_attempts,
+                    self._max_delivery_attempts,
+                    message.message_id,
+                    token,
+                ),
             ).fetchone()
             if updated is None:
                 raise ValueError("stale or unowned queue delivery cannot be released")
