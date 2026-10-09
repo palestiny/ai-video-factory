@@ -178,8 +178,16 @@ def test_lease_expiring_after_initial_check_rolls_back_commit():
         tx = PostgresPersistenceTransaction(connection)
         tx.assert_lease_owner(job_id, lease_token)
         connection.execute(
-            "UPDATE generation_worker_leases SET expires_at = %s WHERE job_id = %s",
-            (datetime.now(timezone.utc) - timedelta(seconds=1), job_id),
+            """
+            UPDATE generation_worker_leases
+            SET acquired_at = %s, expires_at = %s
+            WHERE job_id = %s
+            """,
+            (
+                datetime.now(timezone.utc) - timedelta(seconds=2),
+                datetime.now(timezone.utc) - timedelta(seconds=1),
+                job_id,
+            ),
         )
         tx.append_event(JobEvent(
             event_id=f"{job_id}:must-rollback", job_id=job_id,
