@@ -288,3 +288,55 @@ def test_idempotency_reservation_can_precede_job_insert_in_same_transaction():
         assert existing.status is ReservationStatus.EXISTING
         assert existing.job_id == job_id
         assert transaction.jobs.get(job_id) is not None
+
+
+def test_concurrent_idempotency_reservations_resolve_to_one_durable_job():
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    database_url = _database()
+    barrier = Barrier(2)
+    key = "tx-concurrent-key-" + uuid4().hex
+    scope = "concurrent-reservation-" + uuid4().hex
+    candidate_ids = [f"tx-concurrent-job-{uuid4().hex}" for _ in range(2)]
+
+    def reserve(candidate_job_id: str):
+        with psycopg.connect(database_url) as connection:
+            transaction = PostgresPersistenceTransaction(
+                connection, idempotency_scope=scope
+            )
+            barrier.wait(timeout=10)
+            reservation = transaction.idempotency.reserve(
+                key=key,
+                request_fingerprint="same-canonical-request",
+                job_id=candidate_job_id,
+            )
+            if reservation.status is ReservationStatus.CREATED:
+                transaction.jobs.add(
+                    GenerationJob.create(
+                        candidate_job_id, "video", key
+                    )
+                )
+            transaction.commit()
+            return reservation.status, reservation.job_id
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(reserve, candidate_ids))
+
+    statuses = [status for status, _ in results]
+    assert sorted(status.value for status in statuses) == ["CREATED", "EXISTING"]
+    assert len({job_id for _, job_id in results}) == 1
+
+    with psycopg.connect(database_url) as connection:
+        persisted = connection.execute(
+            """
+            SELECT job_id FROM idempotency_reservations
+            WHERE scope = %s AND idempotency_key = %s
+            """,
+            (scope, key),
+        ).fetchone()
+        assert persisted == (results[0][1],)
+        assert connection.execute(
+            "SELECT count(*) FROM generation_jobs WHERE job_id = ANY(%s)",
+            (candidate_ids,),
+        ).fetchone() == (1,)
