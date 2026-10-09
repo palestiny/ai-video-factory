@@ -139,3 +139,39 @@ def test_poll_generation_survives_repository_round_trip():
     repo.add(current)
 
     assert repo.get("test-provider", "op-123") == current
+
+
+def test_stale_provider_operation_version_is_rejected():
+    from dataclasses import replace
+
+    repo = InMemoryProviderOperationRepository()
+    repo.add(operation())
+    current = repo.get("test-provider", "op-123")
+    assert current is not None
+    repo.save(replace(current, status=ProviderOperationStatus.RUNNING, version=1))
+
+    try:
+        repo.save(replace(current, status=ProviderOperationStatus.SUCCEEDED, version=1))
+    except ValueError as exc:
+        assert "version conflict" in str(exc)
+    else:
+        raise AssertionError("stale provider operation write must be rejected")
+
+
+def test_terminal_provider_operation_cannot_regress():
+    from dataclasses import replace
+
+    repo = InMemoryProviderOperationRepository()
+    repo.add(operation())
+    current = repo.get("test-provider", "op-123")
+    assert current is not None
+    repo.save(replace(current, status=ProviderOperationStatus.SUCCEEDED, version=1))
+    terminal = repo.get("test-provider", "op-123")
+    assert terminal is not None
+
+    try:
+        repo.save(replace(terminal, status=ProviderOperationStatus.RUNNING, version=2))
+    except ValueError as exc:
+        assert "cannot regress" in str(exc)
+    else:
+        raise AssertionError("terminal provider operation must remain terminal")
