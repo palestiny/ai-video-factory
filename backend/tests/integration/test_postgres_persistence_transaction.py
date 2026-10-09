@@ -171,12 +171,14 @@ def test_transaction_validates_active_worker_lease_token_and_expiry():
     with psycopg.connect(_database()) as connection:
         connection.execute(
             """
-            INSERT INTO generation_worker_leases
-                (job_id, worker_id, lease_token, acquired_at, expires_at)
-            VALUES (%s, 'transaction-test-worker', %s, clock_timestamp(),
+            INSERT INTO generation_work_items
+                (message_id, job_id, intent_key, intent_kind, due_at, state,
+                 claim_token, claimed_by, claimed_until)
+            VALUES (%s, %s, %s, 'JOB_EXECUTION', clock_timestamp(),
+                    'CLAIMED', %s, 'transaction-test-worker',
                     clock_timestamp() + interval '2 minutes')
             """,
-            (job_id, token),
+            (str(uuid4()), job_id, job_id + ":lease-check", token),
         )
 
     with psycopg.connect(_database()) as connection:
@@ -189,12 +191,11 @@ def test_transaction_validates_active_worker_lease_token_and_expiry():
     with psycopg.connect(_database()) as connection:
         connection.execute(
             """
-            UPDATE generation_worker_leases
-            SET acquired_at = clock_timestamp() - interval '2 seconds',
-                    expires_at = clock_timestamp() - interval '1 second'
-            WHERE job_id = %s
+            UPDATE generation_work_items
+            SET claimed_until = clock_timestamp() - interval '1 second'
+            WHERE job_id = %s AND claim_token = %s
             """,
-            (job_id,),
+            (job_id, token),
         )
 
     with psycopg.connect(_database()) as connection:
@@ -231,12 +232,11 @@ def test_transaction_rechecks_worker_lease_before_committing_writes():
         with psycopg.connect(_database()) as other:
             other.execute(
                 """
-                UPDATE generation_worker_leases
-                SET acquired_at = clock_timestamp() - interval '2 seconds',
-                    expires_at = clock_timestamp() - interval '1 second'
-                WHERE job_id = %s
+                UPDATE generation_work_items
+                SET claimed_until = clock_timestamp() - interval '1 second'
+                WHERE job_id = %s AND claim_token = %s
                 """,
-                (job_id,),
+                (job_id, token),
             )
 
         with pytest.raises(LeaseOwnershipLost):
