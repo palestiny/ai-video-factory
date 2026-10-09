@@ -115,3 +115,116 @@ def test_committed_poll_intent_survives_crash_before_ack_and_source_is_reclaimed
     with pytest.raises(ValueError, match="stale or unowned"):
         restarted_queue.ack(claimed)
     restarted_queue.ack(recovered)
+
+
+
+def test_fresh_lifecycle_replays_durable_state_without_polling_stale_or_terminal_operations():
+    from app.application.ports import GenerationResult
+    from app.application.provider_operation_lifecycle import ProviderOperationLifecycle
+    from app.application.reconciliation import ProviderExecutionContract, ProviderOperationSafety
+
+    database_url = os.environ.get("DATABASE_URL")
+    if not database_url:
+        pytest.skip("DATABASE_URL is required for PostgreSQL integration tests")
+
+    job_id = "replay-job-" + uuid4().hex
+    provider_name = "replay-provider-" + uuid4().hex
+    operation_id = "replay-operation-" + uuid4().hex
+    key = job_id + "-key"
+
+    with psycopg.connect(database_url) as connection:
+        connection.execute(MIGRATION.read_text(encoding="utf-8"))
+        connection.execute(
+            """
+            INSERT INTO generation_jobs (job_id, capability, idempotency_key, status)
+            VALUES (%s, 'video', %s, 'RUNNING')
+            """,
+            (job_id, key),
+        )
+        PostgresProviderOperationRepository(connection).add(
+            ProviderOperation(
+                provider=provider_name,
+                operation_id=operation_id,
+                idempotency_key=key,
+                capability="video",
+            )
+        )
+
+    stale_operation = None
+    with psycopg.connect(database_url) as connection:
+        transaction = PostgresPersistenceTransaction(connection)
+        current = transaction.provider_operations.get(provider_name, operation_id)
+        assert current is not None
+        stale_operation = current
+        transaction.provider_operations.save(
+            replace(current, status=ProviderOperationStatus.RUNNING,
+                    poll_generation=2, version=1)
+        )
+        transaction.commit()
+
+    class ProviderMustNotBePolled:
+        calls = 0
+
+        def get_status(self, operation):
+            self.calls += 1
+            raise AssertionError("stale or terminal replay must not call provider")
+
+    provider = ProviderMustNotBePolled()
+    contract = ProviderExecutionContract(
+        provider=provider_name,
+        operation_safety=ProviderOperationSafety.IDEMPOTENT,
+    )
+
+    # New connection + new lifecycle instance models process restart. A stale
+    # generation must return the authoritative persisted state without polling.
+    with psycopg.connect(database_url) as connection:
+        transaction = PostgresPersistenceTransaction(connection)
+        lifecycle = ProviderOperationLifecycle(
+            transaction, provider, provider_name, contract
+        )
+        stale_replay = lifecycle.poll(
+            stale_operation,
+            expected_poll_generation=1,
+            job_id=job_id,
+            next_poll_due_at=datetime.now(timezone.utc) + timedelta(seconds=30),
+        )
+        assert stale_replay.operation.poll_generation == 2
+        assert stale_replay.status is ProviderOperationStatus.RUNNING
+        transaction.rollback()
+
+    # Persist a terminal outcome, then replay it from another fresh transaction.
+    terminal_result = GenerationResult(
+        provider=provider_name,
+        provider_operation_id=operation_id,
+        artifact_refs=("artifact://recovered/1",),
+    )
+    with psycopg.connect(database_url) as connection:
+        transaction = PostgresPersistenceTransaction(connection)
+        current = transaction.provider_operations.get(provider_name, operation_id)
+        assert current is not None
+        transaction.provider_operations.save(
+            replace(
+                current,
+                status=ProviderOperationStatus.SUCCEEDED,
+                terminal_result=terminal_result,
+                version=current.version + 1,
+            )
+        )
+        transaction.commit()
+
+    with psycopg.connect(database_url) as connection:
+        transaction = PostgresPersistenceTransaction(connection)
+        lifecycle = ProviderOperationLifecycle(
+            transaction, provider, provider_name, contract
+        )
+        terminal_replay = lifecycle.poll(
+            stale_operation,
+            expected_poll_generation=2,
+            job_id=job_id,
+            next_poll_due_at=datetime.now(timezone.utc) + timedelta(seconds=30),
+        )
+        assert terminal_replay.status is ProviderOperationStatus.SUCCEEDED
+        assert terminal_replay.result == terminal_result
+        assert terminal_replay.operation.poll_generation == 2
+        assert provider.calls == 0
+        transaction.rollback()
