@@ -100,6 +100,8 @@ The initial schema is not proof of the above semantics. The adapter must define 
 
 - Backend Tests run [#573](https://github.com/palestiny/ai-video-factory/actions/runs/37908133064) passed with **167 passed**. The worker now re-registers lease ownership before each internal provider submit/poll transaction because every successful commit clears transaction-local lease checks. A PostgreSQL regression test expires the worker lease during provider polling and verifies the operation state and next-poll intent roll back together. Another test races cancellation against provider success and verifies the job remains `CANCELLED` and its attempt is terminalized as cancelled. The duplicate worker-lease table declaration was removed from the migration, and the schema smoke test asserts that table exists.
 
+- Backend Tests run [#579](https://github.com/palestiny/ai-video-factory/actions/runs/37908327287) passed with **171 passed** after adding `build_postgres_async_worker`. The helper requires an explicit `database_url` or `DATABASE_URL`, and wires the PostgreSQL queue, worker-lease repository, and managed persistence-transaction factory without selecting a hosting vendor. Unit tests cover missing configuration and invalid durations. This is reusable runtime composition, not yet a long-running process entrypoint or deployment configuration.
+
 ## Remaining gaps
 
 - Worker transaction connection ownership is handled by an injected factory and delivery-finally cleanup. Runtime startup still needs to provide the configured connection factory or pool; no cloud vendor or pool implementation is selected here.
