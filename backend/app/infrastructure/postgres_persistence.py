@@ -268,12 +268,11 @@ class PostgresPersistenceTransaction(
             raise LeaseOwnershipLost(f"lease ownership lost: {job_id}")
         row = self._connection.execute(
             """
-            SELECT message_id
-            FROM generation_work_items
+            SELECT job_id
+            FROM generation_worker_leases
             WHERE job_id = %s
-              AND state = 'CLAIMED'
-              AND claim_token = %s::uuid
-              AND claimed_until > now()
+              AND lease_token = %s::uuid
+              AND expires_at > now()
             """,
             (job_id, lease_token),
         ).fetchone()
