@@ -25,7 +25,6 @@ def test_committed_poll_intent_survives_crash_before_ack_and_source_is_reclaimed
     job_id = "recovery-job-" + uuid4().hex
     provider = "recovery-provider-" + uuid4().hex
     operation_id = "recovery-operation-" + uuid4().hex
-    source_key = "recovery-source-" + uuid4().hex
 
     with psycopg.connect(database_url) as connection:
         connection.execute(MIGRATION.read_text(encoding="utf-8"))
