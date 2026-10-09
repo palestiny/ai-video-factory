@@ -236,8 +236,7 @@ def test_transaction_rechecks_claim_lease_before_committing_writes():
             other.execute(
                 """
                 UPDATE generation_work_items
-                SET state = 'PENDING', claim_token = NULL,
-                    claimed_by = NULL, claimed_until = NULL
+                SET claimed_until = clock_timestamp() - interval '1 second'
                 WHERE message_id = %s
                 """,
                 (message_id,),
