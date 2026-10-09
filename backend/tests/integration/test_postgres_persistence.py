@@ -1,4 +1,3 @@
-from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import os
 from pathlib import Path
@@ -8,11 +7,10 @@ import psycopg
 import pytest
 
 from app.application.execution import LeaseOwnershipLost
-from app.application.ports import GenerationResult
 from app.application.provider_operation import ProviderOperation, ProviderOperationStatus
 from app.application.work_intent import WorkIntent
 from app.domain.events import JobEvent, JobEventType
-from app.domain.generation import GenerationAttempt, GenerationJob, GenerationStatus
+from app.domain.generation import GenerationStatus
 from app.infrastructure.postgres_persistence import PostgresPersistenceTransaction
 
 
@@ -161,7 +159,7 @@ def test_lease_owner_is_checked_again_at_commit():
         ).fetchone()[0] == 1
 
 
-def test_expired_or_wrong_lease_cannot_commit():
+def test_lease_expiring_after_initial_check_rolls_back_commit():
     job_id, _, _ = _prepare()
     worker_id = f"worker-{uuid4()}"
     lease_token = str(uuid4())
@@ -173,13 +171,16 @@ def test_expired_or_wrong_lease_cannot_commit():
                 (job_id, worker_id, lease_token, acquired_at, expires_at)
             VALUES (%s, %s, %s, %s, %s)
             """,
-            (job_id, worker_id, lease_token, now - timedelta(minutes=2), now - timedelta(minutes=1)),
+            (job_id, worker_id, lease_token, now, now + timedelta(minutes=1)),
         )
 
     with _connect() as connection:
         tx = PostgresPersistenceTransaction(connection)
-        with pytest.raises(LeaseOwnershipLost):
-            tx.assert_lease_owner(job_id, lease_token)
+        tx.assert_lease_owner(job_id, lease_token)
+        connection.execute(
+            "UPDATE generation_worker_leases SET expires_at = %s WHERE job_id = %s",
+            (datetime.now(timezone.utc) - timedelta(seconds=1), job_id),
+        )
         tx.append_event(JobEvent(
             event_id=f"{job_id}:must-rollback", job_id=job_id,
             event_type=JobEventType.STARTED, occurred_at=datetime.now(timezone.utc),
