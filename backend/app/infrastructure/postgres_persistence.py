@@ -60,7 +60,7 @@ class PostgresGenerationJobRepository(GenerationJobRepository):
         row = self._connection.execute(
             """
             SELECT job_id, capability, idempotency_key, status, attempt_count, failure_code
-            FROM generation_jobs WHERE job_id = %s FOR UPDATE
+            FROM generation_jobs WHERE job_id = %s
             """,
             (job_id,),
         ).fetchone()
@@ -260,6 +260,7 @@ class PostgresPersistenceTransaction(
             connection, scope=idempotency_scope
         )
         self.events = PostgresJobEventStore(connection)
+        self._lease_checks: set[tuple[str, str]] = set()
 
     def append_event(self, event: JobEvent) -> None:
         self.events.append(event)
@@ -275,15 +276,38 @@ class PostgresPersistenceTransaction(
               AND state = 'CLAIMED'
               AND claim_token = %s::uuid
               AND claimed_until > now()
-            FOR UPDATE
             """,
             (job_id, lease_token),
         ).fetchone()
         if row is None:
             raise LeaseOwnershipLost(f"lease ownership lost: {job_id}")
+        # Revalidate and lock only at commit time. Do not hold the queue-row lock
+        # across a potentially slow external provider call.
+        self._lease_checks.add((job_id, lease_token))
 
     def commit(self) -> None:
-        self._connection.commit()
+        try:
+            for job_id, lease_token in sorted(self._lease_checks):
+                row = self._connection.execute(
+                    """
+                    SELECT message_id
+                    FROM generation_work_items
+                    WHERE job_id = %s
+                      AND state = 'CLAIMED'
+                      AND claim_token = %s::uuid
+                      AND claimed_until > now()
+                    FOR UPDATE
+                    """,
+                    (job_id, lease_token),
+                ).fetchone()
+                if row is None:
+                    raise LeaseOwnershipLost(f"lease ownership lost: {job_id}")
+            self._connection.commit()
+            self._lease_checks.clear()
+        except Exception:
+            self._connection.rollback()
+            self._lease_checks.clear()
+            raise
 
     def rollback(self) -> None:
         self._connection.rollback()
