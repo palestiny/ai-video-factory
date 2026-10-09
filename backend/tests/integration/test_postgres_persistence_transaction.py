@@ -165,30 +165,93 @@ def test_composed_transaction_rollback_removes_all_staged_writes():
         ).fetchone() is None
 
 
-def test_transaction_validates_active_lease_token_and_expiry():
+def test_transaction_validates_active_queue_claim_token_and_expiry():
     job_id, _, _, _ = _prepare()
     message_id = uuid4()
     token = uuid4()
     with psycopg.connect(_database()) as connection:
         connection.execute(
             """
-            INSERT INTO generation_worker_leases
-                (job_id, worker_id, lease_token, acquired_at, expires_at)
-            VALUES (%s, 'transaction-test-worker', %s, now(),
-                    now() + interval '2 minutes')
+            INSERT INTO generation_work_items
+                (message_id, job_id, intent_key, intent_kind, due_at, state,
+                 claim_token, claimed_by, claimed_until)
+            VALUES (%s, %s, %s, 'JOB_EXECUTION', now(), 'CLAIMED',
+                    %s, 'transaction-test-worker', now() + interval '2 minutes')
             """,
-            (job_id, token),
+            (message_id, job_id, job_id + ":lease-test", token),
         )
+
+    with psycopg.connect(_database()) as connection:
         transaction = PostgresPersistenceTransaction(connection)
         transaction.assert_lease_owner(job_id, str(token))
         with pytest.raises(LeaseOwnershipLost):
             transaction.assert_lease_owner(job_id, str(uuid4()))
+        transaction.rollback()
+
+    with psycopg.connect(_database()) as connection:
         connection.execute(
-            "UPDATE generation_worker_leases SET acquired_at = now() - interval '5 minutes', expires_at = now() - interval '1 second' WHERE job_id = %s",
-            (job_id,),
+            """
+            UPDATE generation_work_items
+            SET claimed_until = now() - interval '1 second'
+            WHERE message_id = %s
+            """,
+            (message_id,),
         )
+
+    with psycopg.connect(_database()) as connection:
+        transaction = PostgresPersistenceTransaction(connection)
+        with pytest.raises(LeaseOwnershipLost):
+            transaction.assert_lease_owner(job_id, str(token))
+        transaction.rollback()
+
+
+def test_transaction_rechecks_claim_lease_before_committing_writes():
+    job_id, provider, operation_id, _ = _prepare()
+    message_id = uuid4()
+    token = uuid4()
+    with psycopg.connect(_database()) as connection:
+        connection.execute(
+            """
+            INSERT INTO generation_work_items
+                (message_id, job_id, intent_key, intent_kind, due_at, state,
+                 claim_token, claimed_by, claimed_until)
+            VALUES (%s, %s, %s, 'JOB_EXECUTION', now(), 'CLAIMED',
+                    %s, 'transaction-test-worker', now() + interval '2 minutes')
+            """,
+            (message_id, job_id, job_id + ":lease-commit-test", token),
+        )
+
+    with psycopg.connect(_database()) as connection:
+        transaction = PostgresPersistenceTransaction(connection)
+        transaction.assert_lease_owner(job_id, str(token))
+        operation = transaction.provider_operations.get(provider, operation_id)
+        assert operation is not None
+        transaction.provider_operations.save(
+            replace(operation, status=ProviderOperationStatus.RUNNING, version=1)
+        )
+
+        # Simulate expiry/reclaim while external work runs without holding the
+        # queue-row lock for the duration of that external call.
+        with psycopg.connect(_database()) as other:
+            other.execute(
+                """
+                UPDATE generation_work_items
+                SET state = 'PENDING', claim_token = NULL,
+                    claimed_by = NULL, claimed_until = NULL
+                WHERE message_id = %s
+                """,
+                (message_id,),
+            )
+
         with pytest.raises(LeaseOwnershipLost):
             transaction.commit()
+
+    with psycopg.connect(_database()) as connection:
+        stored = connection.execute(
+            "SELECT status, version FROM provider_operations WHERE provider = %s AND operation_id = %s",
+            (provider, operation_id),
+        ).fetchone()
+    assert stored == ("SUBMITTED", 0)
 
 
 def test_idempotency_reservation_can_precede_job_insert_in_same_transaction():
