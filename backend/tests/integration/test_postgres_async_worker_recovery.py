@@ -19,7 +19,7 @@ from app.application.worker import QueueMessage
 from app.application.worker_execution import WorkerDeliveryStatus
 from app.domain.generation import GenerationJob, GenerationStatus
 from app.infrastructure.postgres_generation_job_queue import PostgresGenerationJobQueue
-from app.infrastructure.postgres_persistence import PostgresPersistenceTransaction
+from app.infrastructure.postgres_persistence_factory import PostgresPersistenceTransactionFactory
 from app.infrastructure.postgres_worker_lease import PostgresWorkerLeaseRepository
 
 
@@ -120,8 +120,9 @@ def test_async_worker_recovers_after_commit_before_ack_using_postgres():
     leases = PostgresWorkerLeaseRepository(lambda: psycopg.connect(database_url))
     provider = RestartProvider()
 
-    def transaction_factory():
-        return PostgresPersistenceTransaction(psycopg.connect(database_url))
+    transaction_factory = PostgresPersistenceTransactionFactory(
+        lambda: psycopg.connect(database_url)
+    )
 
     def build_worker(queue):
         return ExecuteAsyncProviderDelivery(
