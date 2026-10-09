@@ -169,3 +169,65 @@ def test_postgres_queue_concurrent_claimers_receive_distinct_work_items():
     claimed_ids = {message.message_id for message in claimed if message is not None}
     assert claimed_ids == {first_queued.message_id, second_queued.message_id}
     assert len({message.claim_token for message in claimed if message is not None}) == 2
+
+
+
+def test_postgres_queue_dead_letters_after_bounded_release_attempts():
+    _prepare()
+    database_url = os.environ["DATABASE_URL"]
+    queue = PostgresGenerationJobQueue(
+        lambda: psycopg.connect(database_url),
+        max_delivery_attempts=2,
+        retry_base_delay=timedelta(0),
+        max_retry_delay=timedelta(0),
+    )
+    queued = queue.enqueue("postgres-queue-job")
+    now = datetime.now(timezone.utc) + timedelta(seconds=1)
+
+    first = queue.claim_next("worker-a", now, timedelta(minutes=1))
+    assert first is not None and first.message_id == queued.message_id
+    queue.release_or_requeue(first)
+
+    second = queue.claim_next("worker-b", now + timedelta(seconds=1), timedelta(minutes=1))
+    assert second is not None and second.message_id == queued.message_id
+    assert second.delivery_attempt == 2
+    queue.release_or_requeue(second)
+
+    with psycopg.connect(database_url) as connection:
+        state = connection.execute(
+            "SELECT state, delivery_attempt, last_error_code FROM generation_work_items WHERE message_id = %s",
+            (queued.message_id,),
+        ).fetchone()
+    assert state == ("DEAD", 2, "MAX_DELIVERY_ATTEMPTS_EXCEEDED")
+    assert queue.claim_next("worker-c", now + timedelta(seconds=2), timedelta(minutes=1)) is None
+
+
+def test_postgres_queue_dead_letters_expired_claim_after_final_attempt():
+    _prepare()
+    database_url = os.environ["DATABASE_URL"]
+    queue = PostgresGenerationJobQueue(
+        lambda: psycopg.connect(database_url),
+        max_delivery_attempts=2,
+        retry_base_delay=timedelta(0),
+        max_retry_delay=timedelta(0),
+    )
+    queued = queue.enqueue("postgres-queue-job")
+    now = datetime.now(timezone.utc) + timedelta(seconds=1)
+    first = queue.claim_next("worker-a", now, timedelta(seconds=1))
+    assert first is not None and first.message_id == queued.message_id
+
+    second = queue.claim_next("worker-b", now + timedelta(seconds=2), timedelta(minutes=1))
+    assert second is not None and second.delivery_attempt == 2
+    with psycopg.connect(database_url) as connection:
+        connection.execute(
+            "UPDATE generation_work_items SET claimed_until = now() - interval '1 second' WHERE message_id = %s",
+            (queued.message_id,),
+        )
+
+    assert queue.claim_next("worker-c", now + timedelta(seconds=3), timedelta(minutes=1)) is None
+    with psycopg.connect(database_url) as connection:
+        state = connection.execute(
+            "SELECT state, delivery_attempt, last_error_code FROM generation_work_items WHERE message_id = %s",
+            (queued.message_id,),
+        ).fetchone()
+    assert state == ("DEAD", 2, "MAX_DELIVERY_ATTEMPTS_EXCEEDED")
