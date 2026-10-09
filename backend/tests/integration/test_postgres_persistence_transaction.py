@@ -190,7 +190,7 @@ def test_transaction_validates_active_worker_lease_token_and_expiry():
         connection.execute(
             """
             UPDATE generation_worker_leases
-            SET expires_at = clock_timestamp() - interval '1 second'
+            SET acquired_at = clock_timestamp() - interval '2 seconds',\n                    expires_at = clock_timestamp() - interval '1 second'
             WHERE job_id = %s
             """,
             (job_id,),
@@ -231,7 +231,7 @@ def test_transaction_rechecks_worker_lease_before_committing_writes():
             other.execute(
                 """
                 UPDATE generation_worker_leases
-                SET expires_at = clock_timestamp() - interval '1 second'
+                SET acquired_at = clock_timestamp() - interval '2 seconds',\n                    expires_at = clock_timestamp() - interval '1 second'
                 WHERE job_id = %s
                 """,
                 (job_id,),
