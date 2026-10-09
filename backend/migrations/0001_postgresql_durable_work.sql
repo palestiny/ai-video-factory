@@ -68,6 +68,20 @@ CREATE TABLE IF NOT EXISTS provider_operations (
     UNIQUE (provider, operation_id)
 );
 
+-- A job-execution lease is distinct from a queue-delivery claim. The worker
+-- lease fences state persistence; the queue claim fences ACK/release.
+CREATE TABLE IF NOT EXISTS generation_worker_leases (
+    job_id TEXT PRIMARY KEY REFERENCES generation_jobs(job_id) ON DELETE CASCADE,
+    worker_id TEXT NOT NULL CHECK (length(trim(worker_id)) > 0),
+    lease_token UUID NOT NULL UNIQUE,
+    acquired_at TIMESTAMPTZ NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    CHECK (expires_at > acquired_at)
+);
+
+CREATE INDEX IF NOT EXISTS ix_generation_worker_leases_expiry
+    ON generation_worker_leases (expires_at);
+
 CREATE TABLE IF NOT EXISTS job_events (
     event_id TEXT PRIMARY KEY,
     job_id TEXT NOT NULL REFERENCES generation_jobs(job_id) ON DELETE RESTRICT,
