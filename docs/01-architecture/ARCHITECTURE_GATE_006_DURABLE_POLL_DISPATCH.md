@@ -79,6 +79,9 @@ The initial schema is not proof of the above semantics. The adapter must define 
 13. Restart recovery handles pending work and expired claims.
 14. Queue age, delivery attempts, and retry/dead-letter state are observable.
 
+- `ProviderOperation` now carries a non-negative optimistic `version`; lifecycle polling advances it with each accepted observation. The PostgreSQL provider-operation adapter uses compare-and-swap updates against the previous version and rejects stale concurrent writers. Terminal rows cannot be changed to a different status by a stale write.
+- `PostgresProviderOperationRepository` and `PostgresWorkIntentRepository` are caller-connection adapters that do not commit independently. New PostgreSQL integration tests exercise operation/result round-trip, operation-state + poll-intent commit/rollback on one connection, and a two-connection stale-write race. These tests have been added; the latest CI run is queued, so results are not yet verified.
+
 ## Remaining gaps
 
 - The generic queue port still exposes `enqueue_after(job_id, delay)` for independent job execution. Provider poll scheduling instead uses `WorkIntentRepository` inside the operation-state transaction. Claimed `QueueMessage` objects carry stable intent metadata and a claim token.
