@@ -125,3 +125,17 @@ Gate 006 remains **NOT PASSED** until the runtime entrypoint wires the configure
 - Backend Tests run [#607](https://github.com/palestiny/ai-video-factory/actions/runs/37916239884) passed on commit `26d931ac3d6ef8d21ad94b107eeaeef9f520a082` with **175 passed**. Added a real-PostgreSQL concurrency test proving two simultaneous reservations for the same idempotency key and canonical fingerprint resolve to one durable job: exactly one `CREATED`, one `EXISTING`, and no duplicate job row. This strengthens submission concurrency evidence; Gate 006 remains **NOT PASSED** pending broader concurrent terminal/stale-generation/cancellation verification and runtime/deployment readiness.
 
 - Backend Tests run [#615](https://github.com/palestiny/ai-video-factory/actions/runs/37925536606) passed on commit `479574c7ce6618ce206a2c808bf8e7cfcb92eb4b` with **176 passed**. Added a read-only PostgreSQL queue health snapshot reporting pending/due-pending work, active and expired claims, dead-letter count, oldest unresolved age, oldest due-pending age, and maximum delivery attempt. The integration test validates metric deltas against real PostgreSQL rows without assuming an empty shared test database. This improves operational visibility but is not a metrics exporter, alerting policy, or production health endpoint; Gate 006 remains **NOT PASSED** pending the remaining runtime/deployment and lifecycle verification work.
+
+
+## Shared PostgreSQL transaction adapter — 2026-10-09
+
+The branch now contains `PostgresPersistenceTransaction`, composing the job, attempt-history, event, idempotency, provider-operation, and work-intent adapters over one caller-owned psycopg connection. Repository adapters do not independently commit. The transaction owner controls commit/rollback, and a lease checked during execution is revalidated under a row lock at commit time so an expired/replaced lease rejects the staged writes.
+
+Integration coverage has been added for:
+- committing provider-operation state, poll intent, attempt history, and event together;
+- rolling those writes back together;
+- active, mismatched, and expired worker-lease rejection, including lease expiry before commit;
+- reserving an idempotency key before inserting its job in the same transaction;
+- concurrent same-key submissions resolving to one durable job.
+
+**Evidence status:** implementation and tests are present in the branch; the CI run for this adapter/test revision must be inspected before treating these behaviors as verified. Gate 006 remains **NOT PASSED** until the PostgreSQL integration suite is green and crash/restart recovery is demonstrated end-to-end.
