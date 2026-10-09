@@ -80,7 +80,7 @@ The initial schema is not proof of the above semantics. The adapter must define 
 14. Queue age, delivery attempts, and retry/dead-letter state are observable.
 
 - `ProviderOperation` now carries a non-negative optimistic `version`; lifecycle polling advances it with each accepted observation. The PostgreSQL provider-operation adapter uses compare-and-swap updates against the previous version and rejects stale concurrent writers. Terminal rows cannot be changed to a different status by a stale write.
-- `PostgresProviderOperationRepository` and `PostgresWorkIntentRepository` are caller-connection adapters that do not commit independently. New PostgreSQL integration tests exercise operation/result round-trip, operation-state + poll-intent commit/rollback on one connection, and a two-connection stale-write race. The first CI run exposed one existing unit test that did not advance the new version token when saving; that test has been corrected. The follow-up CI result for the corrected commit is still pending.
+- `PostgresProviderOperationRepository` and `PostgresWorkIntentRepository` are caller-connection adapters that do not commit independently. New PostgreSQL integration tests exercise operation/result round-trip, operation-state + poll-intent commit/rollback on one connection, and a two-connection stale-write race. The first CI run exposed one existing unit test that did not advance the new version token when saving; that test has been corrected. Backend Tests run [#429](https://github.com/palestiny/ai-video-factory/actions/runs/37863399866) passed on commit `bf13b9b678a12fa24373da6a957a854ffd00752e`, including the new PostgreSQL operation-state/work-intent atomicity and stale-write tests.
 
 ## Remaining gaps
 
