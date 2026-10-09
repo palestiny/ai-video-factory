@@ -269,11 +269,10 @@ class PostgresPersistenceTransaction(
         row = self._connection.execute(
             """
             SELECT job_id
-            FROM generation_work_items
+            FROM generation_worker_leases
             WHERE job_id = %s
-              AND state = 'CLAIMED'
-              AND claim_token = %s::uuid
-              AND claimed_until > clock_timestamp()
+              AND lease_token = %s::uuid
+              AND expires_at > clock_timestamp()
             """,
             (job_id, lease_token),
         ).fetchone()
@@ -289,11 +288,10 @@ class PostgresPersistenceTransaction(
                 row = self._connection.execute(
                     """
                     SELECT job_id
-                    FROM generation_work_items
+                    FROM generation_worker_leases
                     WHERE job_id = %s
-                      AND state = 'CLAIMED'
-                      AND claim_token = %s::uuid
-                      AND claimed_until > clock_timestamp()
+                      AND lease_token = %s::uuid
+                      AND expires_at > clock_timestamp()
                     FOR UPDATE
                     """,
                     (job_id, lease_token),
