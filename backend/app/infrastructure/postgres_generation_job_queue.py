@@ -105,6 +105,7 @@ class PostgresGenerationJobQueue(GenerationJobQueue):
                 SET state = 'ACKED', acked_at = now(),
                     claim_token = NULL, claimed_by = NULL, claimed_until = NULL
                 WHERE message_id = %s AND state = 'CLAIMED' AND claim_token = %s
+                  AND claimed_until > now()
                 RETURNING message_id
                 """,
                 (message.message_id, token),
@@ -123,6 +124,7 @@ class PostgresGenerationJobQueue(GenerationJobQueue):
                     claim_token = NULL, claimed_by = NULL, claimed_until = NULL,
                     last_error_code = 'DELIVERY_RELEASED'
                 WHERE message_id = %s AND state = 'CLAIMED' AND claim_token = %s
+                  AND claimed_until > now()
                 RETURNING message_id
                 """,
                 (message.message_id, token),
