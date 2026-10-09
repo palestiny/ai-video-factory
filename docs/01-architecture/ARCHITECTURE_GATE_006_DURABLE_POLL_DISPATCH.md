@@ -99,7 +99,7 @@ The initial schema is not proof of the above semantics. The adapter must define 
 
 ## Remaining gaps
 
-- The repository adapters and transaction composition exist, but the production composition root/factory that manages connection lifetime for an entire worker delivery is not yet complete. `PostgresPersistenceTransaction` intentionally receives a caller-owned connection; production worker wiring must guarantee cleanup without closing a connection between multiple commits in one async delivery.
+- Worker transaction connection ownership is handled by an injected factory and delivery-finally cleanup. Runtime startup still needs to provide the configured connection factory or pool; no cloud vendor or pool implementation is selected here.
 - The PostgreSQL worker lease repository now provides per-job exclusive leases and token fencing, while the durable queue has its own delivery claim token. These are intentionally separate scopes; end-to-end wiring must verify both tokens are validated at the right boundaries and neither lease can be mistaken for the other.
 - Existing PostgreSQL tests verify operation/intent/attempt/event commit and rollback, job submission idempotency, lease expiry/reclaim, and stale-token rejection. A full process-interruption/restart test through `ExecuteAsyncProviderDelivery` using PostgreSQL-backed queue, worker leases, and transaction composition is still required.
 - Verify all terminal/stale-generation/cancellation paths under concurrent PostgreSQL workers, including crash after durable poll scheduling but before source ACK, and ensure a restarted worker recovers without duplicate provider submission or a lost poll.
