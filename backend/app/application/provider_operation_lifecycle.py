@@ -143,6 +143,7 @@ class ProviderOperationLifecycle:
             current,
             status=status.status,
             poll_generation=next_generation,
+            version=current.version + 1,
             terminal_result=(
                 status.result
                 if is_terminal
